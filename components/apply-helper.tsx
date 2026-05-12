@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Button,
   Card,
@@ -88,14 +88,29 @@ WHAT IT TAUGHT ME (1 short paragraph)
 CLOSING (1–2 sentences)
   → How this scholarship furthers that path. Specific to THIS org, not generic.`;
 
-export function ApplyHelper() {
-  const [scholarship, setScholarship] = useState("");
+type ApplyHelperProps = {
+  preset?: string;
+};
+
+export function ApplyHelper({ preset = "" }: ApplyHelperProps) {
+  const [scholarship, setScholarship] = useState(preset);
   const [generated, setGenerated] = useState(false);
   const [loading, setLoading] = useState(false);
   const [draft, setDraft] = useState("");
   const [feedback, setFeedback] = useState<null | string[]>(null);
   const [scoring, setScoring] = useState(false);
   const [scoreError, setScoreError] = useState<string | null>(null);
+
+  // When the user clicks "Apply guide" on a Finder result, ApplyHelper mounts
+  // (or re-renders) with a new preset. Sync the input + auto-generate the guide
+  // so they land directly on the plan without re-typing or re-submitting.
+  useEffect(() => {
+    if (preset && preset !== scholarship) {
+      setScholarship(preset);
+      setGenerated(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preset]);
 
   function generateGuide(e: React.FormEvent) {
     e.preventDefault();

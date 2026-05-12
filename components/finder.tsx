@@ -27,6 +27,8 @@ import {
   TrendingDown,
   Loader2,
   ArrowRight,
+  Plus,
+  Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -127,7 +129,11 @@ const HOBBIES = [
   "Gaming / eSports",
 ];
 
-export function Finder() {
+type FinderProps = {
+  onApplyGuide?: (scholarshipName: string) => void;
+};
+
+export function Finder({ onApplyGuide }: FinderProps) {
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [hobbies, setHobbies] = useState<Record<string, boolean>>({});
@@ -136,6 +142,36 @@ export function Finder() {
   const [lowComp, setLowComp] = useState(true);
   const [results, setResults] = useState<Result[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // Track which result names have been added to the tracker — drives the
+  // checkmark feedback so users don't accidentally add the same row twice.
+  const [addedToTracker, setAddedToTracker] = useState<Record<string, boolean>>({});
+
+  function addToTracker(r: Result) {
+    if (addedToTracker[r.name]) return;
+    try {
+      const raw = localStorage.getItem("ss_rows");
+      const existing: Array<{ name: string }> = raw ? JSON.parse(raw) : [];
+      // Skip if a row with the same name already exists in the tracker.
+      if (!existing.some((row) => row.name === r.name)) {
+        const newRow = {
+          id: Math.random().toString(36).slice(2, 9),
+          name: r.name,
+          award: r.amount,
+          deadline: "", // r.deadline is a free-form string ("Mar 15, 2027" / "Rolling") — Tracker uses an HTML date input
+          status: "Not started" as const,
+          submitted: "",
+          notes: r.why,
+        };
+        const next = [...existing, newRow];
+        localStorage.setItem("ss_rows", JSON.stringify(next));
+        // Notify Tracker if it's already mounted (storage events don't fire same-tab).
+        window.dispatchEvent(new CustomEvent("ss_rows_changed"));
+      }
+      setAddedToTracker((s) => ({ ...s, [r.name]: true }));
+    } catch {
+      // localStorage can throw in private mode / quota — fail silently, the click was a no-op
+    }
+  }
 
   function toggleHobby(h: string) {
     setHobbies((s) => ({ ...s, [h]: !s[h] }));
@@ -419,10 +455,36 @@ export function Finder() {
                         <Badge key={t} tone="slate">{t}</Badge>
                       ))}
                     </div>
-                    <div className="flex gap-2 pt-1">
-                      <Button size="sm" variant="primary">
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={() => onApplyGuide?.(r.name)}
+                      >
                         <ArrowRight className="h-3.5 w-3.5" />
                         Apply guide
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => addToTracker(r)}
+                        disabled={!!addedToTracker[r.name]}
+                        className={cn(
+                          addedToTracker[r.name] &&
+                            "border-emerald-300 text-emerald-700 dark:border-emerald-500/40 dark:text-emerald-400"
+                        )}
+                      >
+                        {addedToTracker[r.name] ? (
+                          <>
+                            <Check className="h-3.5 w-3.5" />
+                            In tracker
+                          </>
+                        ) : (
+                          <>
+                            <Plus className="h-3.5 w-3.5" />
+                            Add to tracker
+                          </>
+                        )}
                       </Button>
                       {r.url && r.url !== "#" ? (
                         <a

@@ -36,6 +36,14 @@ const TABS: { id: TabId; label: string; icon: typeof Search }[] = [
 
 export default function Page() {
   const [tab, setTab] = useState<TabId>("home");
+  // Cross-tab handoff: when Finder's "Apply guide" button is clicked we set
+  // a preset scholarship name and switch tabs. ApplyHelper picks it up as a prop.
+  const [presetScholarship, setPresetScholarship] = useState<string>("");
+
+  function goToApplyWith(name: string) {
+    setPresetScholarship(name);
+    setTab("apply");
+  }
 
   return (
     <div className="min-h-screen">
@@ -122,8 +130,8 @@ export default function Page() {
       {/* Main content */}
       <main className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
         {tab === "home" && <Home goTo={setTab} />}
-        {tab === "finder" && <Finder />}
-        {tab === "apply" && <ApplyHelper />}
+        {tab === "finder" && <Finder onApplyGuide={goToApplyWith} />}
+        {tab === "apply" && <ApplyHelper preset={presetScholarship} />}
         {tab === "tips" && <TipsHub />}
         {tab === "school" && <SchoolResults />}
         {tab === "tracker" && <Tracker />}
