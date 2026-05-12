@@ -9,7 +9,6 @@ import {
   CardHeader,
   CardTitle,
   Input,
-  Label,
   Badge,
   SectionHeading,
 } from "./ui";
@@ -25,13 +24,31 @@ import {
   ExternalLink,
 } from "lucide-react";
 
-const SCHOOL_RESULTS = [
+type Institutional = {
+  name: string;
+  amount: string;
+  deadline: string;
+  type: "Merit" | "Departmental" | "Identity" | "Alumni" | "Honors" | "Athletic" | "Need-based" | "Local";
+  desc: string;
+  url: string;
+};
+
+type LocalAward = {
+  name: string;
+  amount: string;
+  desc: string;
+  url: string;
+};
+
+// Used only as a fallback if the API call fails before any results are loaded.
+const FALLBACK_INSTITUTIONAL: Institutional[] = [
   {
     name: "Presidential Scholars Award",
     amount: "Full tuition",
     deadline: "Dec 1, 2026",
     type: "Merit",
     desc: "Top 5% of admitted freshmen. Auto-considered when you apply by the early deadline.",
+    url: "",
   },
   {
     name: "First-Generation Pathway Grant",
@@ -39,13 +56,15 @@ const SCHOOL_RESULTS = [
     deadline: "Mar 1, 2027",
     type: "Identity",
     desc: "Requires 250-word essay. Renewable for 4 years if GPA ≥ 3.0.",
+    url: "",
   },
   {
-    name: "Department of Computer Science Scholarship",
+    name: "Departmental Scholarship",
     amount: "$3,500",
     deadline: "Feb 15, 2027",
     type: "Departmental",
-    desc: "Apply directly through the CS department after admission. Most students don't know it exists.",
+    desc: "Apply directly through your major's department after admission. Most students don't know it exists.",
+    url: "",
   },
   {
     name: "Alumni Legacy Award",
@@ -53,42 +72,52 @@ const SCHOOL_RESULTS = [
     deadline: "Rolling",
     type: "Alumni",
     desc: "If any family member attended — even briefly — you may qualify. Check the alumni office.",
-  },
-  {
-    name: "Honors College Stipend",
-    amount: "$1,500/semester",
-    deadline: "After admission",
-    type: "Honors",
-    desc: "Automatic with Honors College admission. Stackable with other awards.",
-  },
-  {
-    name: "Diversity in Engineering Award",
-    amount: "$5,000",
-    deadline: "Apr 15, 2027",
-    type: "Identity",
-    desc: "Underrepresented students in engineering. Short essay + faculty rec.",
+    url: "",
   },
 ];
 
-const LOCAL_AROUND_SCHOOL = [
-  { name: "Town Chamber of Commerce Award", amount: "$1,000", desc: "For incoming freshmen at the local university." },
-  { name: "Campus Bookstore Textbook Grant", amount: "$500", desc: "Renewable. Apply at orientation." },
-  { name: "Greek Life Foundation", amount: "$1,500", desc: "For incoming freshmen who plan to rush." },
+const FALLBACK_LOCAL: LocalAward[] = [
+  { name: "Town Chamber of Commerce Award", amount: "$1,000", desc: "For incoming freshmen at the local university.", url: "" },
+  { name: "Campus Bookstore Textbook Grant", amount: "$500", desc: "Renewable. Apply at orientation.", url: "" },
+  { name: "Greek Life Foundation", amount: "$1,500", desc: "For incoming freshmen who plan to rush.", url: "" },
 ];
 
 export function SchoolResults() {
   const [school, setSchool] = useState("");
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [institutional, setInstitutional] = useState<Institutional[]>([]);
+  const [aroundCampus, setAroundCampus] = useState<LocalAward[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
-  function search(e: React.FormEvent) {
+  async function search(e: React.FormEvent) {
     e.preventDefault();
     if (!school.trim()) return;
     setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
+    setError(null);
+    try {
+      const res = await fetch("/api/school-scholarships", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ school }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || `Request failed (${res.status})`);
+      }
+      const inst: Institutional[] = Array.isArray(data.institutional) ? data.institutional : [];
+      const local: LocalAward[] = Array.isArray(data.aroundCampus) ? data.aroundCampus : [];
+      setInstitutional(inst.length > 0 ? inst : FALLBACK_INSTITUTIONAL);
+      setAroundCampus(local.length > 0 ? local : FALLBACK_LOCAL);
       setSubmitted(true);
-    }, 700);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+      setInstitutional(FALLBACK_INSTITUTIONAL);
+      setAroundCampus(FALLBACK_LOCAL);
+      setSubmitted(true);
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -136,6 +165,12 @@ export function SchoolResults() {
 
       {submitted && (
         <div className="space-y-6 animate-fade-in-up">
+          {error && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
+              <span className="font-semibold">Couldn't reach the model:</span> {error}. Showing example matches instead.
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Card className="bg-gradient-to-br from-brand-600 to-brand-500 text-white border-0">
               <CardContent className="p-5">
@@ -153,7 +188,7 @@ export function SchoolResults() {
                   Institutional awards
                 </div>
                 <div className="mt-1 font-display text-2xl font-bold text-slate-900 dark:text-slate-50">
-                  {SCHOOL_RESULTS.length}
+                  {institutional.length}
                 </div>
               </CardContent>
             </Card>
@@ -164,7 +199,7 @@ export function SchoolResults() {
                   Local + alumni
                 </div>
                 <div className="mt-1 font-display text-2xl font-bold text-slate-900 dark:text-slate-50">
-                  {LOCAL_AROUND_SCHOOL.length}
+                  {aroundCampus.length}
                 </div>
               </CardContent>
             </Card>
@@ -177,7 +212,7 @@ export function SchoolResults() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                {SCHOOL_RESULTS.map((r) => (
+                {institutional.map((r) => (
                   <div
                     key={r.name}
                     className="rounded-xl border border-slate-200 p-4 hover:border-brand-300 transition-colors dark:border-slate-800 dark:hover:border-brand-500/40"
@@ -194,10 +229,17 @@ export function SchoolResults() {
                       <span className="inline-flex items-center gap-1">
                         <Calendar className="h-3.5 w-3.5" /> {r.deadline}
                       </span>
-                      <Button size="sm" variant="outline" className="ml-auto">
-                        <ExternalLink className="h-3 w-3" />
-                        Details
-                      </Button>
+                      {r.url ? (
+                        <a
+                          href={r.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="ml-auto inline-flex items-center justify-center gap-1.5 h-8 px-3 text-sm font-medium rounded-xl border border-slate-200 bg-white text-slate-900 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 transition-all duration-200 cursor-pointer whitespace-nowrap"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          Details
+                        </a>
+                      ) : null}
                     </div>
                   </div>
                 ))}
@@ -212,14 +254,25 @@ export function SchoolResults() {
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {LOCAL_AROUND_SCHOOL.map((l) => (
+                {aroundCampus.map((l) => (
                   <div
                     key={l.name}
-                    className="rounded-xl border border-slate-200 p-4 dark:border-slate-800"
+                    className="rounded-xl border border-slate-200 p-4 dark:border-slate-800 flex flex-col"
                   >
                     <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">{l.name}</div>
                     <div className="mt-0.5 text-xs text-accent-600 dark:text-accent-300 font-medium">{l.amount}</div>
-                    <div className="mt-1.5 text-sm text-slate-600 dark:text-slate-400">{l.desc}</div>
+                    <div className="mt-1.5 text-sm text-slate-600 dark:text-slate-400 flex-1">{l.desc}</div>
+                    {l.url ? (
+                      <a
+                        href={l.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-brand-600 dark:text-brand-400 hover:underline self-start"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        Open page
+                      </a>
+                    ) : null}
                   </div>
                 ))}
               </div>
