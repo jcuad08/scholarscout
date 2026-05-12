@@ -23,8 +23,29 @@ import {
   Folder,
   TrendingUp,
   DollarSign,
+  Sparkles,
+  RefreshCw,
+  Loader2,
+  ExternalLink,
+  ArrowRight,
+  Calendar,
+  TrendingDown,
+  Check,
+  Wand2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+// Mirrors the shape returned by /api/recommend-from-tracker.
+type Recommendation = {
+  name: string;
+  amount: string;
+  deadline: string;
+  competition: "Very low" | "Low" | "Medium";
+  match: number;
+  tags: string[];
+  why: string;
+  url: string;
+};
 
 type Status =
   | "Not started"
@@ -199,6 +220,25 @@ export function Tracker() {
     setLog((l) => l.filter((entry) => !(entry.id === id && entry.result === result)));
   }
 
+  // Used by RecommendationsPanel to push a recommendation into the tracker.
+  // We only get name/award/why from the recommendation — deadline is free-form
+  // (e.g. "Rolling") so we leave the tracker's date input empty for the user
+  // to fill in once they've checked the actual deadline themselves.
+  function addRowFromRecommendation(input: { name: string; award: string; notes: string }) {
+    setRows((r) => [
+      ...r,
+      {
+        id: uid(),
+        name: input.name,
+        award: input.award,
+        deadline: "",
+        status: "Not started",
+        submitted: "",
+        notes: input.notes,
+      },
+    ]);
+  }
+
   const submittedCount = rows.filter((r) => r.status === "Submitted" || r.status === "Won").length;
   const wonAmount = log
     .filter((l) => l.result === "Won")
@@ -262,6 +302,13 @@ export function Tracker() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Personalized recommendations from what's already in the tracker */}
+      <RecommendationsPanel
+        rows={rows}
+        materials={materials}
+        onAddRow={addRowFromRecommendation}
+      />
 
       {/* Applications table */}
       <Card>
@@ -472,4 +519,268 @@ export function Tracker() {
       </div>
     </div>
   );
+}
+
+/* ---------- Recommendations panel ---------- */
+
+type AddRowFromRec = (input: { name: string; award: string; notes: string }) => void;
+
+function RecommendationsPanel({
+  rows,
+  materials,
+  onAddRow,
+}: {
+  rows: Row[];
+  materials: Record<string, boolean>;
+  onAddRow: AddRowFromRec;
+}) {
+  const [recs, setRecs] = useState<Recommendation[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [generatedAt, setGeneratedAt] = useState<number | null>(null);
+  // Tracks recs the user has clicked Add on this session — purely UI feedback.
+  // The cross-session source of truth is whether the name appears in `rows`.
+  const [added, setAdded] = useState<Record<string, boolean>>({});
+  const [hydrated, setHydrated] = useState(false);
+
+  // Names already in the tracker (case + whitespace insensitive) so we can
+  // mark recs as "In tracker" without requiring an exact string match.
+  const trackedNames = new Set(rows.map((r) => r.name.trim().toLowerCase()));
+
+  // Load any cached recommendations on mount so the panel shows results
+  // immediately on tab switch instead of re-fetching every time.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("ss_recs");
+      if (raw) {
+        const cached = JSON.parse(raw);
+        if (Array.isArray(cached?.results)) {
+          setRecs(cached.results);
+          setGeneratedAt(typeof cached.generatedAt === "number" ? cached.generatedAt : null);
+        }
+      }
+    } catch {}
+    setHydrated(true);
+  }, []);
+
+  // Auto-fetch the first time the user has at least one row + no cached recs.
+  // Subsequent rows-array changes do NOT auto-fetch (would burn API quota and
+  // be annoying on every keystroke); user clicks Refresh instead.
+  useEffect(() => {
+    if (!hydrated) return;
+    if (loading) return;
+    if (recs.length > 0) return;
+    if (rows.length === 0) return;
+    fetchRecs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, rows.length === 0]);
+
+  async function fetchRecs() {
+    if (rows.length === 0) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const enabledMaterials = Object.entries(materials)
+        .filter(([, v]) => v)
+        .map(([k]) => k);
+      const res = await fetch("/api/recommend-from-tracker", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows, materials: enabledMaterials }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+      const results: Recommendation[] = Array.isArray(data.results) ? data.results : [];
+      setRecs(results);
+      const ts = Date.now();
+      setGeneratedAt(ts);
+      try {
+        localStorage.setItem("ss_recs", JSON.stringify({ results, generatedAt: ts }));
+      } catch {}
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't fetch recommendations");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleAdd(rec: Recommendation) {
+    const norm = rec.name.trim().toLowerCase();
+    if (added[rec.name] || trackedNames.has(norm)) return;
+    onAddRow({ name: rec.name, award: rec.amount, notes: rec.why });
+    setAdded((s) => ({ ...s, [rec.name]: true }));
+  }
+
+  // Empty-state: no rows yet, so no inference is possible.
+  if (rows.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-accent-500" />
+            Recommended for you
+          </CardTitle>
+          <CardDescription>
+            Add a few scholarships to your tracker and we'll suggest more like them.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-xl border border-dashed border-slate-200 dark:border-slate-800 p-8 text-center">
+            <Wand2 className="h-7 w-7 text-slate-300 dark:text-slate-700 mx-auto" />
+            <div className="text-sm font-medium text-slate-600 dark:text-slate-400 mt-2">
+              Recommendations unlock once you have at least one scholarship in your tracker.
+            </div>
+            <div className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+              Use the Finder tab or click <span className="font-semibold">Add scholarship</span> below to start.
+              The more scholarships you track, the more personalized your recommendations get.
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 gap-2">
+        <div className="min-w-0">
+          <CardTitle className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-accent-500" />
+            Recommended for you
+          </CardTitle>
+          <CardDescription>
+            Based on the {rows.length} {rows.length === 1 ? "scholarship" : "scholarships"} in your tracker.
+            {generatedAt && (
+              <span className="ml-1 text-slate-400">· Updated {formatRelativeTime(generatedAt)}</span>
+            )}
+          </CardDescription>
+        </div>
+        <Button size="sm" variant="outline" onClick={fetchRecs} disabled={loading}>
+          {loading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="h-3.5 w-3.5" />
+          )}
+          {loading ? "Refreshing" : "Refresh"}
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {error && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200 mb-4">
+            <span className="font-semibold">Couldn't fetch recommendations:</span> {error}
+          </div>
+        )}
+
+        {loading && recs.length === 0 && (
+          <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-10 text-center">
+            <Loader2 className="h-6 w-6 animate-spin text-slate-400 mx-auto" />
+            <div className="text-sm text-slate-500 mt-2">Analyzing your tracker…</div>
+          </div>
+        )}
+
+        {!loading && recs.length === 0 && !error && (
+          <div className="rounded-xl border border-dashed border-slate-200 dark:border-slate-800 p-6 text-center">
+            <div className="text-sm text-slate-500">No recommendations yet. Click Refresh to generate some.</div>
+          </div>
+        )}
+
+        {recs.length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {recs.map((r, i) => {
+              const norm = r.name.trim().toLowerCase();
+              const isAdded = added[r.name] || trackedNames.has(norm);
+              const hasUrl = r.url && r.url !== "#";
+              const href = hasUrl
+                ? r.url
+                : `https://www.google.com/search?q=${encodeURIComponent(r.name + " scholarship application")}`;
+              return (
+                <div
+                  key={r.name}
+                  className="rounded-xl border border-slate-200 dark:border-slate-800 p-4 hover:border-brand-300 dark:hover:border-brand-500/40 transition-colors animate-fade-in-up"
+                  style={{ animationDelay: `${i * 30}ms` }}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <h4 className="font-display font-semibold text-sm text-slate-900 dark:text-slate-50 leading-snug">
+                      {r.name}
+                    </h4>
+                    <div className="text-xs font-bold text-brand-600 dark:text-brand-400 shrink-0">
+                      {r.match}%
+                    </div>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-600 dark:text-slate-400">
+                    <span className="inline-flex items-center gap-1">
+                      <DollarSign className="h-3 w-3" /> {r.amount}
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <Calendar className="h-3 w-3" /> {r.deadline}
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <TrendingDown className="h-3 w-3 text-emerald-600" />
+                      <span className="font-medium text-emerald-700 dark:text-emerald-400">
+                        {r.competition}
+                      </span>
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
+                    <span className="font-semibold">Why:</span> {r.why}
+                  </p>
+                  {r.tags.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {r.tags.slice(0, 3).map((t) => (
+                        <Badge key={t} tone="slate">
+                          {t}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      onClick={() => handleAdd(r)}
+                      disabled={isAdded}
+                      className={cn(isAdded && "opacity-60")}
+                    >
+                      {isAdded ? (
+                        <>
+                          <Check className="h-3.5 w-3.5" />
+                          In tracker
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="h-3.5 w-3.5" />
+                          Add to tracker
+                        </>
+                      )}
+                    </Button>
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={hasUrl ? r.url : `Search Google for "${r.name}"`}
+                      className="inline-flex items-center justify-center gap-2 h-8 px-3 text-sm font-semibold rounded-xl border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 hover:border-brand-300 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300 dark:hover:bg-brand-500/20 transition-all duration-200 cursor-pointer whitespace-nowrap"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      {hasUrl ? "Apply on site" : "Search the web"}
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function formatRelativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
