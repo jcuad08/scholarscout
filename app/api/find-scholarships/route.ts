@@ -1,0 +1,151 @@
+import { GoogleGenAI, Type, ApiError } from "@google/genai";
+
+export const runtime = "nodejs";
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+const SYSTEM_PROMPT = `You are ScholarScout, an expert on US college scholarships for incoming freshmen.
+
+You specialize in NICHE, LOW-COMPETITION scholarships — local clubs, niche orgs, employers, religious/cultural groups, hobby-based awards — over the famous-50 that every student applies to.
+
+Given a student profile, return 6–10 SPECIFIC, REAL scholarships ranked by:
+1. Low competition (smaller applicant pool = better odds)
+2. Fit with the student's profile
+3. Reward-to-effort ratio (dollars per hour of work)
+
+For each result include:
+- name: real scholarship name. Do NOT invent fake scholarships. If unsure, use a category (e.g. "Your local Rotary Club Future Leaders Award") rather than a fabricated specific name.
+- amount: award size as a string (e.g. "$2,500", "$1,000–$5,000", "Full tuition")
+- deadline: approximate deadline as a string (e.g. "Mar 15, 2027", "Rolling", "Varies by chapter")
+- competition: "Very low" | "Low" | "Medium" — be honest, don't oversell
+- match: integer 0–100 match score for THIS student
+- tags: 1–4 short tag strings (e.g. ["Local", "Service", "First-gen friendly"])
+- why: one or two sentences explaining why it fits THIS student, citing specific profile fields
+- url: official scholarship URL if you know it confidently, otherwise empty string ""
+
+PRIORITIZE:
+- Local awards (Rotary, Elks, Kiwanis, Lions, JCI, community foundations) if state/zip given
+- Identity-based niche orgs if ethnicity/gender given
+- Major-specific departmental awards if major given
+- Hobby-tied weird scholarships (left-handed, vegetarian, duct tape prom, etc.) when hobbies match
+- Two-stage local→national pipelines (Elks MVS, JCI) — higher odds at the local round
+- First-gen-specific orgs if firstGen is true
+
+DEPRIORITIZE / AVOID:
+- Famous national scholarships (Coca-Cola, Gates, Jack Kent Cooke) unless a very strong profile signal matches
+- Generic "any student" scholarships
+- Anything that smells fabricated
+
+Sort by competition (Very low first) then by match score descending.`;
+
+const FINDER_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    results: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          name: { type: Type.STRING },
+          amount: { type: Type.STRING },
+          deadline: { type: Type.STRING },
+          competition: { type: Type.STRING, enum: ["Very low", "Low", "Medium"] },
+          match: { type: Type.INTEGER },
+          tags: { type: Type.ARRAY, items: { type: Type.STRING } },
+          why: { type: Type.STRING },
+          url: { type: Type.STRING },
+        },
+        required: [
+          "name",
+          "amount",
+          "deadline",
+          "competition",
+          "match",
+          "tags",
+          "why",
+          "url",
+        ],
+        propertyOrdering: [
+          "name",
+          "amount",
+          "deadline",
+          "competition",
+          "match",
+          "tags",
+          "why",
+          "url",
+        ],
+      },
+    },
+  },
+  required: ["results"],
+};
+
+export async function POST(request: Request) {
+  try {
+    if (!process.env.GEMINI_API_KEY) {
+      return Response.json(
+        { error: "Missing GEMINI_API_KEY. Add it to .env.local and restart the dev server." },
+        { status: 401 }
+      );
+    }
+
+    const profile = await request.json();
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: `Student profile:\n\n${JSON.stringify(
+        profile,
+        null,
+        2
+      )}\n\nReturn 6–10 niche, low-competition scholarship matches as structured JSON. Rank by competition (Very low first), then match score.`,
+      config: {
+        systemInstruction: SYSTEM_PROMPT,
+        responseMimeType: "application/json",
+        responseSchema: FINDER_SCHEMA,
+        // Disable thinking — keeps latency low and stays well inside free tier.
+        thinkingConfig: { thinkingBudget: 0 },
+      },
+    });
+
+    const text = response.text;
+    if (!text) {
+      return Response.json(
+        { error: "Model returned no text content" },
+        { status: 502 }
+      );
+    }
+
+    let parsed: { results: unknown };
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return Response.json(
+        { error: "Model returned invalid JSON" },
+        { status: 502 }
+      );
+    }
+
+    return Response.json(parsed);
+  } catch (error) {
+    if (error instanceof ApiError) {
+      const status = error.status ?? 500;
+      if (status === 429) {
+        return Response.json(
+          { error: "Rate limited. Try again in a moment." },
+          { status: 429 }
+        );
+      }
+      if (status === 401 || status === 403) {
+        return Response.json(
+          { error: "Invalid or missing GEMINI_API_KEY." },
+          { status: 401 }
+        );
+      }
+      return Response.json({ error: error.message }, { status });
+    }
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("[find-scholarships]", error);
+    return Response.json({ error: message }, { status: 500 });
+  }
+}
