@@ -229,18 +229,26 @@ export function SchoolResults() {
                       <span className="inline-flex items-center gap-1">
                         <Calendar className="h-3.5 w-3.5" /> {r.deadline}
                       </span>
-                      {r.url ? (
-                        <a
-                          href={r.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title={r.url}
-                          className="ml-auto inline-flex items-center justify-center gap-1.5 h-8 px-3 text-sm font-semibold rounded-xl border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 hover:border-brand-300 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300 dark:hover:bg-brand-500/20 transition-all duration-200 cursor-pointer whitespace-nowrap"
-                        >
-                          <ExternalLink className="h-3 w-3" />
-                          Apply on site
-                        </a>
-                      ) : null}
+                      {(() => {
+                        // Same pattern as Finder: always render an outbound
+                        // link, falling back to a Google search if no URL.
+                        const hasUrl = !!r.url;
+                        const href = hasUrl
+                          ? r.url
+                          : `https://www.google.com/search?q=${encodeURIComponent(r.name + " " + school + " scholarship")}`;
+                        return (
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={hasUrl ? r.url : `Search Google for "${r.name}"`}
+                            className="ml-auto inline-flex items-center justify-center gap-1.5 h-8 px-3 text-sm font-semibold rounded-xl border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 hover:border-brand-300 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300 dark:hover:bg-brand-500/20 transition-all duration-200 cursor-pointer whitespace-nowrap"
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                            {hasUrl ? "Apply on site" : "Search the web"}
+                          </a>
+                        );
+                      })()}
                     </div>
                   </div>
                 ))}

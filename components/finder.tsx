@@ -486,18 +486,29 @@ export function Finder({ onApplyGuide }: FinderProps) {
                           </>
                         )}
                       </Button>
-                      {r.url && r.url !== "#" ? (
-                        <a
-                          href={r.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title={r.url}
-                          className="inline-flex items-center justify-center gap-2 h-8 px-3 text-sm font-semibold rounded-xl border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 hover:border-brand-300 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300 dark:hover:bg-brand-500/20 transition-all duration-200 cursor-pointer whitespace-nowrap"
-                        >
-                          <ExternalLink className="h-3.5 w-3.5" />
-                          Apply on site
-                        </a>
-                      ) : null}
+                      {(() => {
+                        // Always render an outbound link. If we have a real URL,
+                        // go there directly; otherwise fall back to a Google
+                        // search for the scholarship name (one click and the
+                        // user is at the right page). Label changes so the user
+                        // knows which one they're getting.
+                        const hasUrl = r.url && r.url !== "#";
+                        const href = hasUrl
+                          ? r.url
+                          : `https://www.google.com/search?q=${encodeURIComponent(r.name + " scholarship application")}`;
+                        return (
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={hasUrl ? r.url : `Search Google for "${r.name}"`}
+                            className="inline-flex items-center justify-center gap-2 h-8 px-3 text-sm font-semibold rounded-xl border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 hover:border-brand-300 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300 dark:hover:bg-brand-500/20 transition-all duration-200 cursor-pointer whitespace-nowrap"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                            {hasUrl ? "Apply on site" : "Search the web"}
+                          </a>
+                        );
+                      })()}
                     </div>
                   </CardContent>
                 </Card>

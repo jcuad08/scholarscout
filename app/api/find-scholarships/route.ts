@@ -23,7 +23,11 @@ For each result include:
 - match: integer 0 to 100 match score for THIS student
 - tags: 1 to 4 short tag strings (e.g. ["Local", "Service", "First-gen friendly"])
 - why: one or two sentences explaining why it fits THIS student, citing specific profile fields
-- url: official scholarship URL if you know it confidently, otherwise empty string ""
+- url: ALWAYS try to provide a URL. Order of preference:
+    1. The exact official scholarship application page if you know it confidently
+    2. The funding organization's main website (e.g. "https://www.rotary.org" for Rotary Club awards, "https://www.elks.org/scholars/" for Elks)
+    3. Empty string "" only if you have no confident URL at all (rare — most national orgs have a known main site)
+  Do NOT invent URLs. Only return a URL if you are confident it is real and resolvable.
 
 PRIORITIZE:
 - Local awards (Rotary, Elks, Kiwanis, Lions, JCI, community foundations) if state/zip given

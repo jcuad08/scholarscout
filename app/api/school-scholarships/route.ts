@@ -20,7 +20,12 @@ For each result include:
 - deadline: approximate deadline as a string (e.g. "Mar 1, 2027", "Rolling", "After admission")
 - type: one of "Merit" | "Departmental" | "Identity" | "Alumni" | "Honors" | "Athletic" | "Need-based" | "Local"
 - desc: one or two sentences — what it's for, how to apply, any insider tip
-- url: official URL if you know it confidently for THIS school, otherwise empty string ""
+- url: ALWAYS try to provide a URL. Order of preference:
+    1. The exact scholarship application page on the school's website if you know it
+    2. The school's main financial-aid or scholarships page (e.g. "https://finaid.umich.edu/scholarships/" for Michigan)
+    3. The school's main website (e.g. "https://www.umich.edu") as a last resort
+    4. Empty string "" only if you genuinely don't know any reliable URL
+  Do NOT invent URLs. Only return a URL if you are confident it is real and resolvable.
 
 PRIORITIZE under-the-radar awards over the school's flagship merit scholarship that everyone already applies to.
 
