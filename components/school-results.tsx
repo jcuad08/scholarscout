@@ -234,10 +234,11 @@ export function SchoolResults() {
                           href={r.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="ml-auto inline-flex items-center justify-center gap-1.5 h-8 px-3 text-sm font-medium rounded-xl border border-slate-200 bg-white text-slate-900 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 transition-all duration-200 cursor-pointer whitespace-nowrap"
+                          title={r.url}
+                          className="ml-auto inline-flex items-center justify-center gap-1.5 h-8 px-3 text-sm font-semibold rounded-xl border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 hover:border-brand-300 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300 dark:hover:bg-brand-500/20 transition-all duration-200 cursor-pointer whitespace-nowrap"
                         >
                           <ExternalLink className="h-3 w-3" />
-                          Details
+                          Apply on site
                         </a>
                       ) : null}
                     </div>
@@ -267,10 +268,11 @@ export function SchoolResults() {
                         href={l.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-brand-600 dark:text-brand-400 hover:underline self-start"
+                        title={l.url}
+                        className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline self-start"
                       >
                         <ExternalLink className="h-3 w-3" />
-                        Open page
+                        Apply on site
                       </a>
                     ) : null}
                   </div>

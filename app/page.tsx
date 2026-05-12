@@ -127,14 +127,31 @@ export default function Page() {
         </nav>
       </header>
 
-      {/* Main content */}
+      {/*
+        Main content. We render every tab and toggle visibility instead of
+        unmounting — that way Finder results, the school search, and the
+        ApplyHelper draft all survive when the user navigates away and back.
+        The HTML `hidden` attribute is `display: none` and accessibility-safe.
+      */}
       <main className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
-        {tab === "home" && <Home goTo={setTab} />}
-        {tab === "finder" && <Finder onApplyGuide={goToApplyWith} />}
-        {tab === "apply" && <ApplyHelper preset={presetScholarship} />}
-        {tab === "tips" && <TipsHub />}
-        {tab === "school" && <SchoolResults />}
-        {tab === "tracker" && <Tracker />}
+        <div hidden={tab !== "home"}>
+          <Home goTo={setTab} />
+        </div>
+        <div hidden={tab !== "finder"}>
+          <Finder onApplyGuide={goToApplyWith} />
+        </div>
+        <div hidden={tab !== "apply"}>
+          <ApplyHelper preset={presetScholarship} />
+        </div>
+        <div hidden={tab !== "tips"}>
+          <TipsHub />
+        </div>
+        <div hidden={tab !== "school"}>
+          <SchoolResults />
+        </div>
+        <div hidden={tab !== "tracker"}>
+          <Tracker />
+        </div>
       </main>
 
       <footer className="border-t border-slate-200/60 dark:border-slate-800/60 mt-16">
