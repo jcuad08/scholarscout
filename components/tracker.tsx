@@ -91,6 +91,7 @@ export function Tracker() {
     syncing,
     migrationToast,
     dismissMigrationToast,
+    refetchFromCloud,
     addBlankRow,
     updateRow,
     removeRow,
@@ -98,6 +99,17 @@ export function Tracker() {
     setMaterials,
     removeLogEntry,
   } = useTracker();
+  const [refetching, setRefetching] = useState(false);
+
+  async function handleRefresh() {
+    if (refetching) return;
+    setRefetching(true);
+    try {
+      await refetchFromCloud();
+    } finally {
+      setRefetching(false);
+    }
+  }
 
   // Split rows into Active (in progress) and Completed (Won/Rejected). The
   // Tracker's two main lists render from these.
@@ -129,24 +141,35 @@ export function Tracker() {
       {/* Sync state pill + migration toast (only visible when relevant) */}
       <div className="-mt-4 flex flex-wrap items-center gap-3">
         {user ? (
-          <span
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium",
-              syncing
-                ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
-                : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400"
-            )}
-          >
-            {syncing ? (
-              <>
-                <Loader2 className="h-3 w-3 animate-spin" /> Syncing…
-              </>
-            ) : (
-              <>
-                <Cloud className="h-3 w-3" /> Synced
-              </>
-            )}
-          </span>
+          <>
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium",
+                syncing
+                  ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400"
+              )}
+            >
+              {syncing ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin" /> Syncing…
+                </>
+              ) : (
+                <>
+                  <Cloud className="h-3 w-3" /> Synced
+                </>
+              )}
+            </span>
+            <button
+              onClick={handleRefresh}
+              disabled={refetching}
+              title="Pull latest changes from your other devices"
+              className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-xs font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200 disabled:opacity-50 cursor-pointer"
+            >
+              <RefreshCw className={cn("h-3 w-3", refetching && "animate-spin")} />
+              {refetching ? "Refreshing" : "Refresh"}
+            </button>
+          </>
         ) : (
           <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
             <CloudOff className="h-3 w-3" /> Local only

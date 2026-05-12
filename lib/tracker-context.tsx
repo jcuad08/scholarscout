@@ -59,6 +59,9 @@ type TrackerContextValue = {
    *  first sign-in. Components can render + then call dismissMigrationToast. */
   migrationToast: string | null;
   dismissMigrationToast: () => void;
+  /** Manually re-pull the snapshot from the cloud. No-op when logged out.
+   *  Returns when the refetch completes (or throws on failure). */
+  refetchFromCloud: () => Promise<void>;
 
   /** Centralized add. Refuses to insert a row whose normalized name already
    *  exists in the tracker — so Finder, Recs, and any future caller can't
@@ -191,9 +194,20 @@ export function TrackerProvider({ children }: { children: React.ReactNode }) {
     };
   }, [user]);
 
+  // When state changes come FROM realtime (or our manual refetch), we set
+  // these flags so the persistence effects below skip the next write — that
+  // breaks the realtime->setState->persist->realtime infinite loop.
+  const skipNextRowSync = useRef(false);
+  const skipNextLogSync = useRef(false);
+  const skipNextMaterialsSync = useRef(false);
+
   // ---------- Persistence (debounced 600ms when cloud) ----------
   useEffect(() => {
     if (!ready) return;
+    if (skipNextRowSync.current) {
+      skipNextRowSync.current = false;
+      return;
+    }
     if (user) {
       setSyncing(true);
       const t = setTimeout(() => {
@@ -209,6 +223,10 @@ export function TrackerProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!ready) return;
+    if (skipNextLogSync.current) {
+      skipNextLogSync.current = false;
+      return;
+    }
     if (user) {
       const t = setTimeout(() => {
         syncCloudLog(getSupabase(), user.id, log).catch((e) =>
@@ -223,6 +241,10 @@ export function TrackerProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!ready) return;
+    if (skipNextMaterialsSync.current) {
+      skipNextMaterialsSync.current = false;
+      return;
+    }
     if (user) {
       const t = setTimeout(() => {
         syncCloudMaterials(getSupabase(), user.id, materials).catch((e) =>
@@ -234,6 +256,76 @@ export function TrackerProvider({ children }: { children: React.ReactNode }) {
       saveLocalMaterials(materials);
     }
   }, [materials, user, ready]);
+
+  // ---------- Manual refetch from cloud + realtime subscription ----------
+  // Both call this. Suppresses the next persistence write so we don't
+  // immediately re-upload what we just downloaded (which would echo on
+  // realtime and loop).
+  const refetchFromCloud = useCallback(async () => {
+    if (!user) return;
+    try {
+      const snap = await loadCloudSnapshot(getSupabase(), user.id);
+      skipNextRowSync.current = true;
+      skipNextLogSync.current = true;
+      skipNextMaterialsSync.current = true;
+      setRows(snap.rows);
+      setLog(snap.log);
+      setMaterials(snap.materials);
+    } catch (e) {
+      console.error("[TrackerProvider] refetch failed", e);
+    }
+  }, [user]);
+
+  // Subscribe to Supabase Realtime for the three tables filtered to this
+  // user's rows. Any INSERT/UPDATE/DELETE from any device triggers a full
+  // refetch. Cheap because the snapshot is tiny + all three tables come back
+  // in one Promise.all.
+  useEffect(() => {
+    if (!ready || !user) return;
+    const sb = getSupabase();
+    const channel = sb
+      .channel(`tracker:${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "tracker_rows",
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => {
+          refetchFromCloud();
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "tracker_log",
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => {
+          refetchFromCloud();
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "tracker_materials",
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => {
+          refetchFromCloud();
+        }
+      )
+      .subscribe();
+    return () => {
+      sb.removeChannel(channel);
+    };
+  }, [ready, user, refetchFromCloud]);
 
   // ---------- Derived: normalized name set for fast dedup/filter ----------
   const trackedNames = useMemo(
@@ -339,6 +431,7 @@ export function TrackerProvider({ children }: { children: React.ReactNode }) {
     trackedNames,
     migrationToast,
     dismissMigrationToast,
+    refetchFromCloud,
     addRow,
     addBlankRow,
     updateRow,
