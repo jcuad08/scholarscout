@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type, ApiError } from "@google/genai";
+import { humanizeGeminiError } from "@/lib/gemini-error";
 
 export const runtime = "nodejs";
 
@@ -92,6 +93,11 @@ export async function POST(request: Request) {
 
     const profile = await request.json();
 
+    // Inject today's date into the system instruction so the model recommends
+    // scholarships with future deadlines instead of ones from its training cutoff.
+    const today = new Date().toISOString().slice(0, 10);
+    const systemInstruction = `${SYSTEM_PROMPT}\n\nToday's date is ${today}. ONLY recommend scholarships whose deadlines fall on or after today — never recommend awards whose deadlines have already passed. If unsure of the next deadline, use "Rolling" or "Varies" instead of guessing a past date.`;
+
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: `Student profile:\n\n${JSON.stringify(
@@ -100,7 +106,7 @@ export async function POST(request: Request) {
         2
       )}\n\nReturn 6–10 niche, low-competition scholarship matches as structured JSON. Rank by competition (Very low first), then match score.`,
       config: {
-        systemInstruction: SYSTEM_PROMPT,
+        systemInstruction,
         responseMimeType: "application/json",
         responseSchema: FINDER_SCHEMA,
         // Disable thinking — keeps latency low and stays well inside free tier.
@@ -142,10 +148,10 @@ export async function POST(request: Request) {
           { status: 401 }
         );
       }
-      return Response.json({ error: error.message }, { status });
+      return Response.json({ error: humanizeGeminiError(error.message) }, { status });
     }
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("[find-scholarships]", error);
-    return Response.json({ error: message }, { status: 500 });
+    return Response.json({ error: humanizeGeminiError(message) }, { status: 500 });
   }
 }

@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type, ApiError } from "@google/genai";
+import { humanizeGeminiError } from "@/lib/gemini-error";
 
 export const runtime = "nodejs";
 
@@ -90,11 +91,16 @@ export async function POST(request: Request) {
       );
     }
 
+    // Inject today's date so the model recommends scholarships with future
+    // deadlines instead of ones from its training cutoff.
+    const today = new Date().toISOString().slice(0, 10);
+    const systemInstruction = `${SYSTEM_PROMPT}\n\nToday's date is ${today}. ONLY recommend scholarships whose deadlines fall on or after today — never recommend awards whose deadlines have already passed. If unsure of the next deadline, use "Rolling", "Varies", or "After admission" instead of guessing a past date.`;
+
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: `Target school: ${school.trim()}\n\nReturn 5-8 institutional scholarships and 3-5 around-campus scholarships tied to this school as structured JSON.`,
       config: {
-        systemInstruction: SYSTEM_PROMPT,
+        systemInstruction,
         responseMimeType: "application/json",
         responseSchema: SCHOOL_SCHEMA,
         thinkingConfig: { thinkingBudget: 0 },
@@ -135,10 +141,10 @@ export async function POST(request: Request) {
           { status: 401 }
         );
       }
-      return Response.json({ error: error.message }, { status });
+      return Response.json({ error: humanizeGeminiError(error.message) }, { status });
     }
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("[school-scholarships]", error);
-    return Response.json({ error: message }, { status: 500 });
+    return Response.json({ error: humanizeGeminiError(message) }, { status: 500 });
   }
 }

@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type, ApiError } from "@google/genai";
+import { humanizeGeminiError } from "@/lib/gemini-error";
 
 export const runtime = "nodejs";
 
@@ -105,10 +106,10 @@ export async function POST(request: Request) {
           { status: 401 }
         );
       }
-      return Response.json({ error: error.message }, { status });
+      return Response.json({ error: humanizeGeminiError(error.message) }, { status });
     }
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("[score-essay]", error);
-    return Response.json({ error: message }, { status: 500 });
+    return Response.json({ error: humanizeGeminiError(message) }, { status: 500 });
   }
 }
