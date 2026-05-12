@@ -31,6 +31,7 @@ import {
   Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTracker } from "@/lib/tracker-context";
 
 type Result = {
   name: string;
@@ -134,6 +135,11 @@ type FinderProps = {
 };
 
 export function Finder({ onApplyGuide }: FinderProps) {
+  // Tracker state via shared context: trackedNames lets us filter results
+  // and gate the Add-to-tracker button; addRow centralizes the dedup so
+  // duplicates can't be created from here.
+  const { trackedNames, addRow } = useTracker();
+
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [hobbies, setHobbies] = useState<Record<string, boolean>>({});
@@ -142,35 +148,12 @@ export function Finder({ onApplyGuide }: FinderProps) {
   const [lowComp, setLowComp] = useState(true);
   const [results, setResults] = useState<Result[]>([]);
   const [error, setError] = useState<string | null>(null);
-  // Track which result names have been added to the tracker — drives the
-  // checkmark feedback so users don't accidentally add the same row twice.
-  const [addedToTracker, setAddedToTracker] = useState<Record<string, boolean>>({});
 
   function addToTracker(r: Result) {
-    if (addedToTracker[r.name]) return;
-    try {
-      const raw = localStorage.getItem("ss_rows");
-      const existing: Array<{ name: string }> = raw ? JSON.parse(raw) : [];
-      // Skip if a row with the same name already exists in the tracker.
-      if (!existing.some((row) => row.name === r.name)) {
-        const newRow = {
-          id: Math.random().toString(36).slice(2, 9),
-          name: r.name,
-          award: r.amount,
-          deadline: "", // r.deadline is a free-form string ("Mar 15, 2027" / "Rolling") — Tracker uses an HTML date input
-          status: "Not started" as const,
-          submitted: "",
-          notes: r.why,
-        };
-        const next = [...existing, newRow];
-        localStorage.setItem("ss_rows", JSON.stringify(next));
-        // Notify Tracker if it's already mounted (storage events don't fire same-tab).
-        window.dispatchEvent(new CustomEvent("ss_rows_changed"));
-      }
-      setAddedToTracker((s) => ({ ...s, [r.name]: true }));
-    } catch {
-      // localStorage can throw in private mode / quota — fail silently, the click was a no-op
-    }
+    addRow({ name: r.name, award: r.amount, notes: r.why });
+    // No optimistic local state needed — trackedNames updates instantly when
+    // the row lands in the context, which re-renders this card with the
+    // "In tracker" state.
   }
 
   function toggleHobby(h: string) {
@@ -183,6 +166,13 @@ export function Finder({ onApplyGuide }: FinderProps) {
     setError(null);
 
     const form = new FormData(e.currentTarget);
+    // excludeNames: tell the model not to suggest scholarships that are
+    // already in the user's tracker (active OR completed). Saves output
+    // tokens and avoids the user seeing an awkward "you already added this"
+    // result. The Set is built from the real names, not the normalized
+    // versions, so the model gets the original casing.
+    const excludeNames = Array.from(trackedNames);
+
     const profile = {
       gpa: form.get("gpa") || null,
       major: form.get("major") || null,
@@ -199,6 +189,7 @@ export function Finder({ onApplyGuide }: FinderProps) {
       firstGen,
       financialNeed: need,
       prioritizeLowCompetition: lowComp,
+      excludeNames,
     };
 
     try {
@@ -405,15 +396,27 @@ export function Finder({ onApplyGuide }: FinderProps) {
             </div>
           )}
 
-          {/* Results */}
+          {/* Results — client-side filter drops anything already in the
+              tracker (defense in depth on top of the model's excludeNames
+              instruction). Show a small "X already-tracked hidden" hint so
+              the user knows why some results disappeared. */}
+          {(() => {
+            const visible = results.filter((r) => !trackedNames.has(r.name.trim().toLowerCase()));
+            const hiddenCount = results.length - visible.length;
+            return (
           <div>
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-4 gap-3">
               <div>
                 <h3 className="font-display text-xl font-bold text-slate-900 dark:text-slate-50">
-                  {results.length} matches found
+                  {visible.length} matches found
                 </h3>
                 <p className="text-sm text-slate-600 dark:text-slate-400">
                   Sorted by competition level + match score
+                  {hiddenCount > 0 && (
+                    <span className="ml-1 text-slate-400">
+                      · {hiddenCount} already in your tracker, hidden
+                    </span>
+                  )}
                 </p>
               </div>
               <Badge tone="emerald">
@@ -422,7 +425,7 @@ export function Finder({ onApplyGuide }: FinderProps) {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {results.map((r, i) => (
+              {visible.map((r, i) => (
                 <Card
                   key={r.name}
                   className="hover:border-brand-300 dark:hover:border-brand-500/40 transition-colors animate-fade-in-up"
@@ -468,23 +471,9 @@ export function Finder({ onApplyGuide }: FinderProps) {
                         size="sm"
                         variant="outline"
                         onClick={() => addToTracker(r)}
-                        disabled={!!addedToTracker[r.name]}
-                        className={cn(
-                          addedToTracker[r.name] &&
-                            "border-emerald-300 text-emerald-700 dark:border-emerald-500/40 dark:text-emerald-400"
-                        )}
                       >
-                        {addedToTracker[r.name] ? (
-                          <>
-                            <Check className="h-3.5 w-3.5" />
-                            In tracker
-                          </>
-                        ) : (
-                          <>
-                            <Plus className="h-3.5 w-3.5" />
-                            Add to tracker
-                          </>
-                        )}
+                        <Plus className="h-3.5 w-3.5" />
+                        Add to tracker
                       </Button>
                       {(() => {
                         // Always render an outbound link. If we have a real URL,
@@ -515,6 +504,8 @@ export function Finder({ onApplyGuide }: FinderProps) {
               ))}
             </div>
           </div>
+            );
+          })()}
 
           {/* Where to find more */}
           <Card>

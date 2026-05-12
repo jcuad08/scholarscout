@@ -46,6 +46,8 @@ DEPRIORITIZE / AVOID:
 - Generic "any student" scholarships
 - Anything that smells fabricated
 
+CRITICAL: If the student's profile includes an "excludeNames" array, you MUST NOT recommend any scholarship whose name (case-insensitive, ignoring leading/trailing whitespace) appears in that array. These are scholarships the student is already tracking or has completed — do not duplicate them. Generate fresh recommendations only.
+
 Sort by competition (Very low first) then by match score descending.`;
 
 const FINDER_SCHEMA = {

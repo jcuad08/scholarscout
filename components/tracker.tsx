@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Button,
   Card,
@@ -33,25 +33,13 @@ import {
   Wand2,
   Cloud,
   CloudOff,
+  Undo2,
+  CheckCircle2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
-import { getSupabase } from "@/lib/supabase";
-import {
-  loadLocalRows,
-  loadLocalLog,
-  loadLocalMaterials,
-  saveLocalRows,
-  saveLocalLog,
-  saveLocalMaterials,
-  loadCloudSnapshot,
-  syncCloudRows,
-  syncCloudLog,
-  syncCloudMaterials,
-  migrateLocalToCloud,
-  hasAnyLocal,
-} from "@/lib/tracker-storage";
-import type { Row, WonLost, Status } from "./tracker-types";
+import { useTracker, splitByCompletion } from "@/lib/tracker-context";
+import type { Row, Status } from "./tracker-types";
 import { STATUSES } from "./tracker-types";
 
 // Mirrors the shape returned by /api/recommend-from-tracker.
@@ -92,258 +80,35 @@ const statusTone: Record<Status, "slate" | "amber" | "violet" | "brand" | "emera
   Rejected: "rose",
 };
 
-function uid(): string {
-  // Need real UUIDs for Supabase (the tracker_rows.id column is uuid). Falls
-  // back to a uuid-shaped Math.random string for older browsers, though all
-  // modern targets support crypto.randomUUID.
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  // Minimal RFC4122-shaped fallback. Not crypto-strong but valid.
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
+// uid + duplicate-checked add now live in lib/tracker-context.tsx.
 
 export function Tracker() {
-  const { ready: authReady, user } = useAuth();
+  const { user } = useAuth();
+  const {
+    rows,
+    log,
+    materials,
+    syncing,
+    migrationToast,
+    dismissMigrationToast,
+    addBlankRow,
+    updateRow,
+    removeRow,
+    reactivateRow,
+    setMaterials,
+    removeLogEntry,
+  } = useTracker();
 
-  // All three start empty so first-time visitors see a clean state. The auth-
-  // aware loader below populates from localStorage OR Supabase depending on
-  // who's signed in.
-  const [rows, setRows] = useState<Row[]>([]);
-  const [log, setLog] = useState<WonLost[]>([]);
-  const [materials, setMaterials] = useState<Record<string, boolean>>({});
-  // `hydrated` flips true once we've finished the initial load for the
-  // current auth state. Persistence effects refuse to run until then so we
-  // don't overwrite saved data with our empty initial state.
-  const [hydrated, setHydrated] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [migrationToast, setMigrationToast] = useState<string | null>(null);
+  // Split rows into Active (in progress) and Completed (Won/Rejected). The
+  // Tracker's two main lists render from these.
+  const { active, completed } = splitByCompletion(rows);
 
-  // Identifies which user (or "local") the current in-memory state belongs
-  // to — when this changes (sign in / sign out), we re-load from the right
-  // source instead of writing the previous user's state to the new one.
-  const stateOwner = useRef<string | null>(null);
-
-  // Auth-aware initial load + reload-on-auth-change.
-  useEffect(() => {
-    if (!authReady) return;
-    const owner = user?.id ?? "local";
-    if (stateOwner.current === owner) return;
-
-    let cancelled = false;
-    setHydrated(false);
-
-    (async () => {
-      try {
-        if (user) {
-          // Logged in: fetch cloud, opportunistically migrate any localStorage
-          // data on first sign-in.
-          const sb = getSupabase();
-          const cloud = await loadCloudSnapshot(sb, user.id);
-
-          let finalRows = cloud.rows;
-          let finalLog = cloud.log;
-          let finalMaterials = cloud.materials;
-
-          if (hasAnyLocal()) {
-            // Upload local data, dedupe by name vs cloud, then clear local.
-            const result = await migrateLocalToCloud(sb, user.id, cloud);
-            // Re-fetch so the local state matches what's now in cloud.
-            const after = await loadCloudSnapshot(sb, user.id);
-            finalRows = after.rows;
-            finalLog = after.log;
-            finalMaterials = after.materials;
-
-            const summary: string[] = [];
-            if (result.migratedRows > 0) summary.push(`${result.migratedRows} scholarships`);
-            if (result.migratedLog > 0) summary.push(`${result.migratedLog} log entries`);
-            if (result.migratedMaterials) summary.push("materials checklist");
-            if (summary.length > 0) {
-              setMigrationToast(`Synced ${summary.join(", ")} from this device to your account.`);
-            }
-          }
-
-          if (!cancelled) {
-            setRows(finalRows);
-            setLog(finalLog);
-            setMaterials(finalMaterials);
-          }
-        } else {
-          // Logged out: read localStorage as before.
-          const r = loadLocalRows();
-          const l = loadLocalLog();
-          const m = loadLocalMaterials();
-          if (!cancelled) {
-            setRows(r);
-            setLog(l);
-            setMaterials(m);
-          }
-        }
-        if (!cancelled) {
-          stateOwner.current = owner;
-          setHydrated(true);
-        }
-      } catch (err) {
-        console.error("[Tracker] load failed", err);
-        if (!cancelled) {
-          // Fall back to whatever's in local so the UI is still usable.
-          setRows(loadLocalRows());
-          setLog(loadLocalLog());
-          setMaterials(loadLocalMaterials());
-          stateOwner.current = owner;
-          setHydrated(true);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [authReady, user]);
-
-  // Cross-component event: Finder dispatches "ss_rows_changed" after writing
-  // to localStorage. Only meaningful when logged out (cloud handles its own
-  // sync). When logged in, the Add-to-tracker button writes directly via state.
-  useEffect(() => {
-    if (user) return;
-    function reload() {
-      setRows(loadLocalRows());
-      setLog(loadLocalLog());
-      setMaterials(loadLocalMaterials());
-    }
-    window.addEventListener("ss_rows_changed", reload);
-    window.addEventListener("storage", reload);
-    return () => {
-      window.removeEventListener("ss_rows_changed", reload);
-      window.removeEventListener("storage", reload);
-    };
-  }, [user]);
-
-  // Persistence: write to whichever backend is active. Cloud writes are
-  // debounced 600ms so a flurry of state changes (e.g. typing in a notes
-  // field) collapses into one Supabase round-trip.
-  useEffect(() => {
-    if (!hydrated) return;
-    if (user) {
-      setSyncing(true);
-      const t = setTimeout(() => {
-        syncCloudRows(getSupabase(), user.id, rows)
-          .catch((e) => console.error("[Tracker] cloud sync rows failed", e))
-          .finally(() => setSyncing(false));
-      }, 600);
-      return () => clearTimeout(t);
-    } else {
-      saveLocalRows(rows);
-    }
-  }, [rows, user, hydrated]);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    if (user) {
-      const t = setTimeout(() => {
-        syncCloudLog(getSupabase(), user.id, log).catch((e) =>
-          console.error("[Tracker] cloud sync log failed", e)
-        );
-      }, 600);
-      return () => clearTimeout(t);
-    } else {
-      saveLocalLog(log);
-    }
-  }, [log, user, hydrated]);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    if (user) {
-      const t = setTimeout(() => {
-        syncCloudMaterials(getSupabase(), user.id, materials).catch((e) =>
-          console.error("[Tracker] cloud sync materials failed", e)
-        );
-      }, 600);
-      return () => clearTimeout(t);
-    } else {
-      saveLocalMaterials(materials);
-    }
-  }, [materials, user, hydrated]);
-
-  function addRow() {
-    setRows((r) => [
-      ...r,
-      {
-        id: uid(),
-        name: "",
-        award: "",
-        deadline: "",
-        status: "Not started",
-        submitted: "",
-        notes: "",
-      },
-    ]);
-  }
-
-  function update(id: string, patch: Partial<Row>) {
-    setRows((current) => {
-      const before = current.find((row) => row.id === id);
-      const next = current.map((row) => (row.id === id ? { ...row, ...patch } : row));
-      // Side-effect: when status flips TO Won or Rejected, add a log entry —
-      // unless we already have one for this row + result (idempotent on toggling
-      // back and forth).
-      if (
-        before &&
-        patch.status &&
-        patch.status !== before.status &&
-        (patch.status === "Won" || patch.status === "Rejected")
-      ) {
-        const result = patch.status;
-        setLog((l) => {
-          if (l.some((entry) => entry.id === id && entry.result === result)) return l;
-          return [
-            ...l,
-            {
-              id, // mirror the row id so we can dedupe
-              name: before.name || "(unnamed scholarship)",
-              result,
-              amount: result === "Won" ? before.award || "—" : "—",
-              date: new Date().toISOString().slice(0, 10),
-            },
-          ];
-        });
-      }
-      return next;
-    });
-  }
-
-  function remove(id: string) {
-    setRows((r) => r.filter((row) => row.id !== id));
-  }
-
-  function removeLog(id: string, result: "Won" | "Rejected") {
-    setLog((l) => l.filter((entry) => !(entry.id === id && entry.result === result)));
-  }
-
-  // Used by RecommendationsPanel to push a recommendation into the tracker.
-  // We only get name/award/why from the recommendation — deadline is free-form
-  // (e.g. "Rolling") so we leave the tracker's date input empty for the user
-  // to fill in once they've checked the actual deadline themselves.
-  function addRowFromRecommendation(input: { name: string; award: string; notes: string }) {
-    setRows((r) => [
-      ...r,
-      {
-        id: uid(),
-        name: input.name,
-        award: input.award,
-        deadline: "",
-        status: "Not started",
-        submitted: "",
-        notes: input.notes,
-      },
-    ]);
-  }
-
-  const submittedCount = rows.filter((r) => r.status === "Submitted" || r.status === "Won").length;
+  // Stats: "Active" count = anything not yet Won/Rejected. "Submitted" counts
+  // rows that have at least reached the Submitted status. "Won $" sums the
+  // log entries (which auto-populate when status flips to Won).
+  const submittedCount = rows.filter(
+    (r) => r.status === "Submitted" || r.status === "Won"
+  ).length;
   const wonAmount = log
     .filter((l) => l.result === "Won")
     .reduce((sum, l) => sum + parseInt(l.amount.replace(/[^0-9]/g, "") || "0", 10), 0);
@@ -392,7 +157,7 @@ export function Tracker() {
             <Check className="h-3 w-3" />
             {migrationToast}
             <button
-              onClick={() => setMigrationToast(null)}
+              onClick={dismissMigrationToast}
               aria-label="Dismiss"
               className="ml-1 text-emerald-600/70 hover:text-emerald-800 dark:hover:text-emerald-200 cursor-pointer"
             >
@@ -410,7 +175,7 @@ export function Tracker() {
               <ClipboardList className="h-3.5 w-3.5" />
               Active
             </div>
-            <div className="mt-1 font-display text-3xl font-bold">{rows.length}</div>
+            <div className="mt-1 font-display text-3xl font-bold">{active.length}</div>
             <div className="text-xs text-brand-100 mt-1">in pipeline</div>
           </CardContent>
         </Card>
@@ -452,12 +217,9 @@ export function Tracker() {
         </Card>
       </div>
 
-      {/* Personalized recommendations from what's already in the tracker */}
-      <RecommendationsPanel
-        rows={rows}
-        materials={materials}
-        onAddRow={addRowFromRecommendation}
-      />
+      {/* Personalized recommendations from what's already in the tracker.
+          The panel reads tracker state directly via useTracker(), so no props. */}
+      <RecommendationsPanel />
 
       {/* Applications table */}
       <Card>
@@ -466,7 +228,7 @@ export function Tracker() {
             <CardTitle>Active applications</CardTitle>
             <CardDescription>Click any cell to edit. Saves automatically.</CardDescription>
           </div>
-          <Button onClick={addRow} size="sm">
+          <Button onClick={addBlankRow} size="sm">
             <Plus className="h-4 w-4" />
             Add scholarship
           </Button>
@@ -486,7 +248,7 @@ export function Tracker() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
+                {active.map((row) => (
                   <tr
                     key={row.id}
                     className="border-b border-slate-100 dark:border-slate-800/60 hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors"
@@ -494,7 +256,7 @@ export function Tracker() {
                     <td className="px-2 py-2">
                       <Input
                         value={row.name}
-                        onChange={(e) => update(row.id, { name: e.target.value })}
+                        onChange={(e) => updateRow(row.id, { name: e.target.value })}
                         placeholder="Scholarship name"
                         className="h-9 border-transparent bg-transparent hover:border-slate-200 dark:hover:border-slate-800"
                       />
@@ -502,7 +264,7 @@ export function Tracker() {
                     <td className="px-2 py-2 w-28">
                       <Input
                         value={row.award}
-                        onChange={(e) => update(row.id, { award: e.target.value })}
+                        onChange={(e) => updateRow(row.id, { award: e.target.value })}
                         placeholder="$1,000"
                         className="h-9 border-transparent bg-transparent hover:border-slate-200 dark:hover:border-slate-800"
                       />
@@ -511,14 +273,14 @@ export function Tracker() {
                       <Input
                         type="date"
                         value={row.deadline}
-                        onChange={(e) => update(row.id, { deadline: e.target.value })}
+                        onChange={(e) => updateRow(row.id, { deadline: e.target.value })}
                         className="h-9 border-transparent bg-transparent hover:border-slate-200 dark:hover:border-slate-800"
                       />
                     </td>
                     <td className="px-2 py-2 w-48">
                       <Select
                         value={row.status}
-                        onChange={(e) => update(row.id, { status: e.target.value as Status })}
+                        onChange={(e) => updateRow(row.id, { status: e.target.value as Status })}
                         className={cn("h-9 border-transparent bg-transparent hover:border-slate-200 dark:hover:border-slate-800")}
                       >
                         {STATUSES.map((s) => (
@@ -535,21 +297,21 @@ export function Tracker() {
                       <Input
                         type="date"
                         value={row.submitted}
-                        onChange={(e) => update(row.id, { submitted: e.target.value })}
+                        onChange={(e) => updateRow(row.id, { submitted: e.target.value })}
                         className="h-9 border-transparent bg-transparent hover:border-slate-200 dark:hover:border-slate-800"
                       />
                     </td>
                     <td className="px-2 py-2">
                       <Input
                         value={row.notes}
-                        onChange={(e) => update(row.id, { notes: e.target.value })}
+                        onChange={(e) => updateRow(row.id, { notes: e.target.value })}
                         placeholder="Notes"
                         className="h-9 border-transparent bg-transparent hover:border-slate-200 dark:hover:border-slate-800"
                       />
                     </td>
                     <td className="px-2 py-2 w-10">
                       <button
-                        onClick={() => remove(row.id)}
+                        onClick={() => removeRow(row.id)}
                         aria-label="Remove row"
                         className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition-colors cursor-pointer"
                       >
@@ -558,13 +320,15 @@ export function Tracker() {
                     </td>
                   </tr>
                 ))}
-                {rows.length === 0 && (
+                {active.length === 0 && (
                   <tr>
                     <td colSpan={7} className="px-2 py-12 text-center">
                       <div className="flex flex-col items-center gap-2 text-slate-500">
                         <ClipboardList className="h-8 w-8 text-slate-300 dark:text-slate-700" />
                         <div className="text-sm font-medium text-slate-600 dark:text-slate-400">
-                          No applications yet
+                          {completed.length > 0
+                            ? "No active applications — check Completed below"
+                            : "No applications yet"}
                         </div>
                         <div className="text-xs text-slate-500 max-w-sm">
                           Click <span className="font-semibold">Add scholarship</span> above, or use{" "}
@@ -579,6 +343,73 @@ export function Tracker() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Completed scholarships — anything with status Won/Rejected.
+          Shown only when non-empty so it doesn't clutter for new users. */}
+      {completed.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+              Completed
+              <Badge tone="slate">{completed.length}</Badge>
+            </CardTitle>
+            <CardDescription>
+              Scholarships you've won or been rejected from. <span className="font-semibold">Reactivate</span> to move back to active,{" "}
+              <span className="font-semibold">Delete</span> to remove from tracker (so it can show up in Finder again).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {completed.map((row) => (
+                <div
+                  key={row.id}
+                  className="rounded-xl border border-slate-200 dark:border-slate-800 p-4 group hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="font-semibold text-sm text-slate-900 dark:text-slate-100 leading-snug">
+                      {row.name || <span className="text-slate-400 italic">(unnamed)</span>}
+                    </div>
+                    <Badge tone={row.status === "Won" ? "emerald" : "rose"}>{row.status}</Badge>
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                    {row.award && (
+                      <span className="inline-flex items-center gap-1">
+                        <DollarSign className="h-3 w-3" /> {row.award}
+                      </span>
+                    )}
+                    {row.submitted && (
+                      <span className="inline-flex items-center gap-1">
+                        <Calendar className="h-3 w-3" /> Submitted {row.submitted}
+                      </span>
+                    )}
+                  </div>
+                  {row.notes && (
+                    <div className="mt-2 text-xs text-slate-600 dark:text-slate-400 line-clamp-2">
+                      {row.notes}
+                    </div>
+                  )}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={() => reactivateRow(row.id)}>
+                      <Undo2 className="h-3.5 w-3.5" />
+                      Reactivate
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => removeRow(row.id)}
+                      className="text-slate-500 hover:text-rose-600 dark:hover:text-rose-400"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Won/Lost + Materials */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -630,7 +461,7 @@ export function Tracker() {
                         <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 mt-1">{l.amount}</div>
                       </div>
                       <button
-                        onClick={() => removeLog(l.id, l.result)}
+                        onClick={() => removeLogEntry(l.id, l.result)}
                         aria-label="Remove log entry"
                         className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 cursor-pointer"
                       >
@@ -672,29 +503,17 @@ export function Tracker() {
 
 /* ---------- Recommendations panel ---------- */
 
-type AddRowFromRec = (input: { name: string; award: string; notes: string }) => void;
+function RecommendationsPanel() {
+  // Pulls live tracker state from the shared context — no props needed.
+  // trackedNames lets us mark recs as "In tracker" so the user can't add
+  // duplicates from the recommendations list either.
+  const { rows, materials, addRow, trackedNames } = useTracker();
 
-function RecommendationsPanel({
-  rows,
-  materials,
-  onAddRow,
-}: {
-  rows: Row[];
-  materials: Record<string, boolean>;
-  onAddRow: AddRowFromRec;
-}) {
   const [recs, setRecs] = useState<Recommendation[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generatedAt, setGeneratedAt] = useState<number | null>(null);
-  // Tracks recs the user has clicked Add on this session — purely UI feedback.
-  // The cross-session source of truth is whether the name appears in `rows`.
-  const [added, setAdded] = useState<Record<string, boolean>>({});
   const [hydrated, setHydrated] = useState(false);
-
-  // Names already in the tracker (case + whitespace insensitive) so we can
-  // mark recs as "In tracker" without requiring an exact string match.
-  const trackedNames = new Set(rows.map((r) => r.name.trim().toLowerCase()));
 
   // Load any cached recommendations on mount so the panel shows results
   // immediately on tab switch instead of re-fetching every time.
@@ -754,10 +573,11 @@ function RecommendationsPanel({
   }
 
   function handleAdd(rec: Recommendation) {
-    const norm = rec.name.trim().toLowerCase();
-    if (added[rec.name] || trackedNames.has(norm)) return;
-    onAddRow({ name: rec.name, award: rec.amount, notes: rec.why });
-    setAdded((s) => ({ ...s, [rec.name]: true }));
+    // Centralized addRow does the dedup itself — if the name is already in
+    // the tracker it returns { added: false } and we just no-op. The
+    // "In tracker" badge below is driven off trackedNames so it stays
+    // accurate after the row lands.
+    addRow({ name: rec.name, award: rec.amount, notes: rec.why });
   }
 
   // Empty-state: no rows yet, so no inference is possible.
@@ -837,7 +657,9 @@ function RecommendationsPanel({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {recs.map((r, i) => {
               const norm = r.name.trim().toLowerCase();
-              const isAdded = added[r.name] || trackedNames.has(norm);
+              // trackedNames updates instantly when addRow lands a new row,
+              // so we don't need a separate optimistic local "added" state.
+              const isAdded = trackedNames.has(norm);
               const hasUrl = r.url && r.url !== "#";
               const href = hasUrl
                 ? r.url
