@@ -81,11 +81,17 @@ export function AuthModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in-up"
+      // Scrollable overlay: when the modal content is taller than the viewport
+      // (short windows, mobile, zoomed-in users), the OUTER div scrolls so the
+      // whole modal stays reachable. `items-center` on the inner flex wrapper
+      // centers the modal when content is short enough; `min-h-full` ensures
+      // the wrapper still fills the viewport so centering works.
+      className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-fade-in-up"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
     >
+      <div className="flex min-h-full items-center justify-center p-4">
       <div
         className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
         onClick={(e) => e.stopPropagation()}
@@ -225,6 +231,7 @@ export function AuthModal({
             </>
           )}
         </div>
+      </div>
       </div>
     </div>
   );
