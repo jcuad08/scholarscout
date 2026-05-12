@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type, ApiError } from "@google/genai";
+import { NextResponse } from "next/server";
 import { humanizeGeminiError } from "@/lib/gemini-error";
 
 export const runtime = "nodejs";
@@ -77,7 +78,7 @@ const SCHOOL_SCHEMA = {
 export async function POST(request: Request) {
   try {
     if (!process.env.GEMINI_API_KEY) {
-      return Response.json(
+      return NextResponse.json(
         { error: "Missing GEMINI_API_KEY. Add it to .env.local and restart the dev server." },
         { status: 401 }
       );
@@ -85,7 +86,7 @@ export async function POST(request: Request) {
 
     const { school } = (await request.json()) as { school?: string };
     if (!school || typeof school !== "string" || school.trim().length < 2) {
-      return Response.json(
+      return NextResponse.json(
         { error: "School name required." },
         { status: 400 }
       );
@@ -109,7 +110,7 @@ export async function POST(request: Request) {
 
     const text = response.text;
     if (!text) {
-      return Response.json(
+      return NextResponse.json(
         { error: "Model returned no text content" },
         { status: 502 }
       );
@@ -119,32 +120,32 @@ export async function POST(request: Request) {
     try {
       parsed = JSON.parse(text);
     } catch {
-      return Response.json(
+      return NextResponse.json(
         { error: "Model returned invalid JSON" },
         { status: 502 }
       );
     }
 
-    return Response.json(parsed);
+    return NextResponse.json(parsed);
   } catch (error) {
     if (error instanceof ApiError) {
       const status = error.status ?? 500;
       if (status === 429) {
-        return Response.json(
+        return NextResponse.json(
           { error: "Rate limited. Try again in a moment." },
           { status: 429 }
         );
       }
       if (status === 401 || status === 403) {
-        return Response.json(
+        return NextResponse.json(
           { error: "Invalid or missing GEMINI_API_KEY." },
           { status: 401 }
         );
       }
-      return Response.json({ error: humanizeGeminiError(error.message) }, { status });
+      return NextResponse.json({ error: humanizeGeminiError(error.message) }, { status });
     }
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("[school-scholarships]", error);
-    return Response.json({ error: humanizeGeminiError(message) }, { status: 500 });
+    return NextResponse.json({ error: humanizeGeminiError(message) }, { status: 500 });
   }
 }

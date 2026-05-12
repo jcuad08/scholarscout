@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type, ApiError } from "@google/genai";
+import { NextResponse } from "next/server";
 import { humanizeGeminiError } from "@/lib/gemini-error";
 
 export const runtime = "nodejs";
@@ -15,7 +16,7 @@ Score the student's draft on these dimensions:
 - WORD ECONOMY — filler, repetition, hedge words ("very", "really", "passionate"), passive voice
 - CLOSING — does it tie back to the scholarship's mission, or trail off generically
 
-Return 4–6 SHORT, ACTIONABLE feedback bullets. Each bullet must:
+Return 4 to 6 SHORT, ACTIONABLE feedback bullets. Each bullet must:
 - State what's working OR what to fix — never just "good job"
 - Cite SPECIFIC phrases from the draft in quotes when possible (e.g. \`The phrase "I am passionate about" appears 3 times — replace with action\`)
 - Be ONE sentence, under 25 words
@@ -41,7 +42,7 @@ const ESSAY_SCHEMA = {
 export async function POST(request: Request) {
   try {
     if (!process.env.GEMINI_API_KEY) {
-      return Response.json(
+      return NextResponse.json(
         { error: "Missing GEMINI_API_KEY. Add it to .env.local and restart the dev server." },
         { status: 401 }
       );
@@ -53,7 +54,7 @@ export async function POST(request: Request) {
     };
 
     if (!draft || typeof draft !== "string" || draft.trim().length < 20) {
-      return Response.json(
+      return NextResponse.json(
         { error: "Draft too short. Paste at least a paragraph." },
         { status: 400 }
       );
@@ -63,7 +64,7 @@ export async function POST(request: Request) {
       model: "gemini-2.5-flash",
       contents: `Scholarship the student is applying to: ${
         scholarship?.trim() || "(not specified — give general feedback)"
-      }\n\n--- DRAFT START ---\n${draft.trim()}\n--- DRAFT END ---\n\nReturn 4–6 actionable feedback bullets as structured JSON.`,
+      }\n\n--- DRAFT START ---\n${draft.trim()}\n--- DRAFT END ---\n\nReturn 4 to 6 actionable feedback bullets as structured JSON.`,
       config: {
         systemInstruction: SYSTEM_PROMPT,
         responseMimeType: "application/json",
@@ -74,7 +75,7 @@ export async function POST(request: Request) {
 
     const text = response.text;
     if (!text) {
-      return Response.json(
+      return NextResponse.json(
         { error: "Model returned no text content" },
         { status: 502 }
       );
@@ -84,32 +85,32 @@ export async function POST(request: Request) {
     try {
       parsed = JSON.parse(text);
     } catch {
-      return Response.json(
+      return NextResponse.json(
         { error: "Model returned invalid JSON" },
         { status: 502 }
       );
     }
 
-    return Response.json(parsed);
+    return NextResponse.json(parsed);
   } catch (error) {
     if (error instanceof ApiError) {
       const status = error.status ?? 500;
       if (status === 429) {
-        return Response.json(
+        return NextResponse.json(
           { error: "Rate limited. Try again in a moment." },
           { status: 429 }
         );
       }
       if (status === 401 || status === 403) {
-        return Response.json(
+        return NextResponse.json(
           { error: "Invalid or missing GEMINI_API_KEY." },
           { status: 401 }
         );
       }
-      return Response.json({ error: humanizeGeminiError(error.message) }, { status });
+      return NextResponse.json({ error: humanizeGeminiError(error.message) }, { status });
     }
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("[score-essay]", error);
-    return Response.json({ error: humanizeGeminiError(message) }, { status: 500 });
+    return NextResponse.json({ error: humanizeGeminiError(message) }, { status: 500 });
   }
 }
