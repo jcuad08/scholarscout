@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Button, Input, Label } from "./ui";
 import { useAuth } from "@/lib/auth-context";
 import { GraduationCap, Loader2, X, Cloud, CheckCircle2 } from "lucide-react";
@@ -24,6 +25,10 @@ export function AuthModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmationSent, setConfirmationSent] = useState(false);
+  // Wait for client-mount before calling createPortal (document.body doesn't
+  // exist during SSR). Without this, the portal runs server-side and explodes.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   // Reset state when the modal closes so re-opening is clean.
   useEffect(() => {
@@ -46,7 +51,7 @@ export function AuthModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  if (!open) return null;
+  if (!open || !mounted) return null;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -79,14 +84,13 @@ export function AuthModal({
     // On success the page navigates away to Google's OAuth — don't reset loading.
   }
 
-  return (
+  // Render via portal into document.body so the modal escapes any ancestor
+  // stacking context. The site header has `backdrop-blur-xl` (== backdrop-
+  // filter), which makes it the *containing block* for any position:fixed
+  // descendants — clipping the modal to the header's bounding box. Portaling
+  // into <body> sidesteps that entirely.
+  return createPortal(
     <div
-      // Scrollable overlay. Pin content to the TOP with breathing room
-      // (items-start + pt-10 sm:pt-20) instead of items-center. Centering
-      // misbehaves when content height is close to viewport height — the
-      // modal can end up partially clipped or, weirdly, look transparent
-      // because the card sits at the seam between viewport edges. items-start
-      // is what most production apps use (Headless UI, Radix, etc).
       className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-fade-in-up"
       onClick={onClose}
       role="dialog"
@@ -234,7 +238,8 @@ export function AuthModal({
         </div>
       </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
