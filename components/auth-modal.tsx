@@ -81,19 +81,20 @@ export function AuthModal({
 
   return (
     <div
-      // Scrollable overlay: when the modal content is taller than the viewport
-      // (short windows, mobile, zoomed-in users), the OUTER div scrolls so the
-      // whole modal stays reachable. `items-center` on the inner flex wrapper
-      // centers the modal when content is short enough; `min-h-full` ensures
-      // the wrapper still fills the viewport so centering works.
+      // Scrollable overlay. Pin content to the TOP with breathing room
+      // (items-start + pt-10 sm:pt-20) instead of items-center. Centering
+      // misbehaves when content height is close to viewport height — the
+      // modal can end up partially clipped or, weirdly, look transparent
+      // because the card sits at the seam between viewport edges. items-start
+      // is what most production apps use (Headless UI, Radix, etc).
       className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-sm animate-fade-in-up"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
     >
-      <div className="flex min-h-full items-center justify-center p-4">
+      <div className="flex min-h-full items-start justify-center p-4 pt-10 sm:pt-20">
       <div
-        className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+        className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900 my-8"
         onClick={(e) => e.stopPropagation()}
       >
         <button
