@@ -141,6 +141,7 @@ export function Finder({ onApplyGuide }: FinderProps) {
   const { trackedNames, addRow } = useTracker();
 
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [hobbies, setHobbies] = useState<Record<string, boolean>>({});
   const [firstGen, setFirstGen] = useState(false);
@@ -148,6 +149,12 @@ export function Finder({ onApplyGuide }: FinderProps) {
   const [lowComp, setLowComp] = useState(true);
   const [results, setResults] = useState<Result[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // Holds the profile from the last initial search (sans excludeNames) so
+  // 'Show more' can re-issue the same query with an expanded exclude list.
+  const [lastProfile, setLastProfile] = useState<Record<string, unknown> | null>(null);
+  // Flips true when 'Show more' returns no fresh results — used to hide the
+  // button so the user isn't tempted to keep clicking nothing.
+  const [noMoreResults, setNoMoreResults] = useState(false);
 
   function addToTracker(r: Result) {
     addRow({ name: r.name, award: r.amount, notes: r.why });
@@ -164,16 +171,13 @@ export function Finder({ onApplyGuide }: FinderProps) {
     e.preventDefault();
     setLoading(true);
     setError(null);
+    setNoMoreResults(false);
 
     const form = new FormData(e.currentTarget);
-    // excludeNames: tell the model not to suggest scholarships that are
-    // already in the user's tracker (active OR completed). Saves output
-    // tokens and avoids the user seeing an awkward "you already added this"
-    // result. The Set is built from the real names, not the normalized
-    // versions, so the model gets the original casing.
-    const excludeNames = Array.from(trackedNames);
-
-    const profile = {
+    // Profile WITHOUT excludeNames — that's added per-fetch since the
+    // exclude list grows when the user clicks "Show more". Stored so
+    // 'Show more' can re-issue the same query.
+    const profile: Record<string, unknown> = {
       gpa: form.get("gpa") || null,
       major: form.get("major") || null,
       state: form.get("state") || null,
@@ -189,30 +193,75 @@ export function Finder({ onApplyGuide }: FinderProps) {
       firstGen,
       financialNeed: need,
       prioritizeLowCompetition: lowComp,
-      excludeNames,
     };
+    setLastProfile(profile);
 
+    // Initial search excludes only what's already in the tracker.
+    await fetchAndApply(profile, Array.from(trackedNames), "replace");
+    setLoading(false);
+  }
+
+  async function showMore() {
+    if (!lastProfile || loadingMore) return;
+    setLoadingMore(true);
+    setError(null);
+    // Exclude tracker names AND every result we've already shown this
+    // session, so the model returns a genuinely fresh batch.
+    const excludeNames = Array.from(
+      new Set([...trackedNames, ...results.map((r) => r.name.trim().toLowerCase())])
+    );
+    await fetchAndApply(lastProfile, excludeNames, "append");
+    setLoadingMore(false);
+  }
+
+  /**
+   * Shared fetcher. `mode` controls how new results combine with current
+   * state: 'replace' wipes (initial search), 'append' adds (Show more).
+   * Append also dedupes by normalized name in case the model still echoed
+   * something from the exclude list.
+   */
+  async function fetchAndApply(
+    baseProfile: Record<string, unknown>,
+    excludeNames: string[],
+    mode: "replace" | "append"
+  ) {
     try {
       const res = await fetch("/api/find-scholarships", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(profile),
+        body: JSON.stringify({ ...baseProfile, excludeNames }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || `Request failed (${res.status})`);
-      }
+      if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
       const incoming: Result[] = Array.isArray(data.results) ? data.results : [];
-      setResults(incoming.length > 0 ? incoming : FALLBACK_RESULTS);
-      setSubmitted(true);
+
+      if (mode === "replace") {
+        setResults(incoming.length > 0 ? incoming : FALLBACK_RESULTS);
+        setSubmitted(true);
+        return;
+      }
+
+      // Append: dedupe against current results by normalized name, drop the
+      // ones the tracker already has, and detect "no more" so we can hide
+      // the Show-more button.
+      setResults((prev) => {
+        const haveLower = new Set(prev.map((r) => r.name.trim().toLowerCase()));
+        const fresh = incoming.filter((r) => {
+          const norm = r.name.trim().toLowerCase();
+          return !haveLower.has(norm) && !trackedNames.has(norm);
+        });
+        if (fresh.length === 0) setNoMoreResults(true);
+        return [...prev, ...fresh];
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Something went wrong";
       setError(msg);
-      // Show fallbacks so the UI is still useful while we surface the error
-      setResults(FALLBACK_RESULTS);
-      setSubmitted(true);
-    } finally {
-      setLoading(false);
+      // Fallbacks only on the initial search — if Show more fails, leave the
+      // existing results alone so the user doesn't lose what they've seen.
+      if (mode === "replace") {
+        setResults(FALLBACK_RESULTS);
+        setSubmitted(true);
+      }
     }
   }
 
@@ -506,6 +555,37 @@ export function Finder({ onApplyGuide }: FinderProps) {
           </div>
             );
           })()}
+
+          {/* Show more matches — re-runs the same search but tells the model
+              to skip every name we've already shown, so the user gets a
+              genuinely fresh batch each click. Hidden once the model
+              returns nothing new (noMoreResults). */}
+          <div className="flex justify-center">
+            {noMoreResults ? (
+              <div className="text-sm text-slate-500 italic">
+                That's everything we found for this profile. Tweak a field above and search again for more.
+              </div>
+            ) : (
+              <Button
+                size="lg"
+                variant="outline"
+                onClick={showMore}
+                disabled={loadingMore || !lastProfile}
+              >
+                {loadingMore ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Finding more…
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4" />
+                    Show more matches
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
 
           {/* Where to find more */}
           <Card>
