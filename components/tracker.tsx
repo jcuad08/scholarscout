@@ -57,42 +57,7 @@ type Row = {
   notes: string;
 };
 
-const SEED: Row[] = [
-  {
-    id: "1",
-    name: "Local Rotary Future Leaders",
-    award: "$2,500",
-    deadline: "2027-03-15",
-    status: "Drafting essay",
-    submitted: "",
-    notes: "Need transcript",
-  },
-  {
-    id: "2",
-    name: "Doodle for Google",
-    award: "$30,000",
-    deadline: "2026-12-01",
-    status: "Researching",
-    submitted: "",
-    notes: "Use Artare portfolio",
-  },
-  {
-    id: "3",
-    name: "Burger King Scholars",
-    award: "$1,000",
-    deadline: "2026-12-15",
-    status: "Submitted",
-    submitted: "2026-12-10",
-    notes: "Confirmation email saved",
-  },
-];
-
 type WonLost = { id: string; name: string; result: "Won" | "Rejected"; amount: string; date: string };
-
-const SEED_LOG: WonLost[] = [
-  { id: "a", name: "Elks Lodge Local Round", result: "Won", amount: "$500", date: "2026-04-12" },
-  { id: "b", name: "Coca-Cola Scholars", result: "Rejected", amount: "—", date: "2026-03-01" },
-];
 
 const MATERIALS = [
   "Resume (PDF)",
@@ -122,31 +87,62 @@ function uid() {
 }
 
 export function Tracker() {
-  const [rows, setRows] = useState<Row[]>(SEED);
-  const [log] = useState<WonLost[]>(SEED_LOG);
+  // All three start empty so first-time visitors see a clean state, not seed data
+  // pretending to be theirs. Hydration is safe — initial server-render and first
+  // client-render both produce the empty state; localStorage is read in useEffect.
+  const [rows, setRows] = useState<Row[]>([]);
+  const [log, setLog] = useState<WonLost[]>([]);
   const [materials, setMaterials] = useState<Record<string, boolean>>({});
+  // We only persist after the first hydration read — otherwise the empty initial
+  // state would overwrite saved data on first mount.
+  const [hydrated, setHydrated] = useState(false);
 
-  // Hydration safe: load any persisted state on mount only.
+  // Read persisted state on mount and subscribe to the cross-component
+  // "ss_rows_changed" event that Finder fires when adding to tracker.
   useEffect(() => {
-    try {
-      const r = localStorage.getItem("ss_rows");
-      const m = localStorage.getItem("ss_materials");
-      if (r) setRows(JSON.parse(r));
-      if (m) setMaterials(JSON.parse(m));
-    } catch {}
+    function loadFromStorage() {
+      try {
+        const r = localStorage.getItem("ss_rows");
+        const l = localStorage.getItem("ss_log");
+        const m = localStorage.getItem("ss_materials");
+        if (r) setRows(JSON.parse(r));
+        if (l) setLog(JSON.parse(l));
+        if (m) setMaterials(JSON.parse(m));
+      } catch {}
+    }
+    loadFromStorage();
+    setHydrated(true);
+    // Re-read when Finder pushes a row in. CustomEvent for same-tab sync;
+    // 'storage' covers other tabs/windows of the same site.
+    const onChange = () => loadFromStorage();
+    window.addEventListener("ss_rows_changed", onChange);
+    window.addEventListener("storage", onChange);
+    return () => {
+      window.removeEventListener("ss_rows_changed", onChange);
+      window.removeEventListener("storage", onChange);
+    };
   }, []);
 
   useEffect(() => {
+    if (!hydrated) return;
     try {
       localStorage.setItem("ss_rows", JSON.stringify(rows));
     } catch {}
-  }, [rows]);
+  }, [rows, hydrated]);
 
   useEffect(() => {
+    if (!hydrated) return;
+    try {
+      localStorage.setItem("ss_log", JSON.stringify(log));
+    } catch {}
+  }, [log, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
     try {
       localStorage.setItem("ss_materials", JSON.stringify(materials));
     } catch {}
-  }, [materials]);
+  }, [materials, hydrated]);
 
   function addRow() {
     setRows((r) => [
@@ -164,11 +160,43 @@ export function Tracker() {
   }
 
   function update(id: string, patch: Partial<Row>) {
-    setRows((r) => r.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+    setRows((current) => {
+      const before = current.find((row) => row.id === id);
+      const next = current.map((row) => (row.id === id ? { ...row, ...patch } : row));
+      // Side-effect: when status flips TO Won or Rejected, add a log entry —
+      // unless we already have one for this row + result (idempotent on toggling
+      // back and forth).
+      if (
+        before &&
+        patch.status &&
+        patch.status !== before.status &&
+        (patch.status === "Won" || patch.status === "Rejected")
+      ) {
+        const result = patch.status;
+        setLog((l) => {
+          if (l.some((entry) => entry.id === id && entry.result === result)) return l;
+          return [
+            ...l,
+            {
+              id, // mirror the row id so we can dedupe
+              name: before.name || "(unnamed scholarship)",
+              result,
+              amount: result === "Won" ? before.award || "—" : "—",
+              date: new Date().toISOString().slice(0, 10),
+            },
+          ];
+        });
+      }
+      return next;
+    });
   }
 
   function remove(id: string) {
     setRows((r) => r.filter((row) => row.id !== id));
+  }
+
+  function removeLog(id: string, result: "Won" | "Rejected") {
+    setLog((l) => l.filter((entry) => !(entry.id === id && entry.result === result)));
   }
 
   const submittedCount = rows.filter((r) => r.status === "Submitted" || r.status === "Won").length;
@@ -336,8 +364,17 @@ export function Tracker() {
                 ))}
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-2 py-10 text-center text-sm text-slate-500">
-                      No applications yet. Click "Add scholarship" to start.
+                    <td colSpan={7} className="px-2 py-12 text-center">
+                      <div className="flex flex-col items-center gap-2 text-slate-500">
+                        <ClipboardList className="h-8 w-8 text-slate-300 dark:text-slate-700" />
+                        <div className="text-sm font-medium text-slate-600 dark:text-slate-400">
+                          No applications yet
+                        </div>
+                        <div className="text-xs text-slate-500 max-w-sm">
+                          Click <span className="font-semibold">Add scholarship</span> above, or use{" "}
+                          <span className="font-semibold">Add to tracker</span> on any Finder result.
+                        </div>
+                      </div>
                     </td>
                   </tr>
                 )}
@@ -358,34 +395,56 @@ export function Tracker() {
             <CardDescription>Celebrate the wins. Learn from the rest.</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-2">
-              {log.map((l) => (
-                <div
-                  key={l.id}
-                  className="flex items-center justify-between rounded-xl border border-slate-200 p-3 dark:border-slate-800"
-                >
-                  <div className="flex items-center gap-3">
-                    {l.result === "Won" ? (
-                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400">
-                        <Trophy className="h-4 w-4" />
+            {log.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-slate-200 dark:border-slate-800 p-6 text-center">
+                <Trophy className="h-7 w-7 text-slate-300 dark:text-slate-700 mx-auto" />
+                <div className="text-sm font-medium text-slate-600 dark:text-slate-400 mt-2">
+                  No results logged yet
+                </div>
+                <div className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
+                  Mark any active app as <span className="font-semibold">Won</span> or{" "}
+                  <span className="font-semibold">Rejected</span> and it'll show up here.
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {log.map((l) => (
+                  <div
+                    key={`${l.id}:${l.result}`}
+                    className="flex items-center justify-between rounded-xl border border-slate-200 p-3 dark:border-slate-800 group"
+                  >
+                    <div className="flex items-center gap-3">
+                      {l.result === "Won" ? (
+                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400">
+                          <Trophy className="h-4 w-4" />
+                        </div>
+                      ) : (
+                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                          <XCircle className="h-4 w-4" />
+                        </div>
+                      )}
+                      <div>
+                        <div className="font-semibold text-sm text-slate-900 dark:text-slate-100">{l.name}</div>
+                        <div className="text-xs text-slate-500">{l.date}</div>
                       </div>
-                    ) : (
-                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                        <XCircle className="h-4 w-4" />
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <Badge tone={l.result === "Won" ? "emerald" : "rose"}>{l.result}</Badge>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 mt-1">{l.amount}</div>
                       </div>
-                    )}
-                    <div>
-                      <div className="font-semibold text-sm text-slate-900 dark:text-slate-100">{l.name}</div>
-                      <div className="text-xs text-slate-500">{l.date}</div>
+                      <button
+                        onClick={() => removeLog(l.id, l.result)}
+                        aria-label="Remove log entry"
+                        className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10 cursor-pointer"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <Badge tone={l.result === "Won" ? "emerald" : "rose"}>{l.result}</Badge>
-                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-100 mt-1">{l.amount}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
