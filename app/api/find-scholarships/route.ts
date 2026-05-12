@@ -3,6 +3,10 @@ import { NextResponse } from "next/server";
 import { humanizeGeminiError } from "@/lib/gemini-error";
 
 export const runtime = "nodejs";
+// Vercel Hobby defaults serverless functions to 10s, which a Gemini cold-start
+// can comfortably exceed (SDK init + first model call). 30s gives ~3x headroom
+// over typical warm response (~6s) and stays well inside Hobby's 60s ceiling.
+export const maxDuration = 30;
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 

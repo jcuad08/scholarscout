@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { humanizeGeminiError } from "@/lib/gemini-error";
 
 export const runtime = "nodejs";
+export const maxDuration = 30;
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 

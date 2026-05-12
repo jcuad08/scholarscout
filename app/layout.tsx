@@ -2,12 +2,21 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 // Resolve a base URL for absolute Open Graph / Twitter image links.
-// Vercel auto-injects VERCEL_URL on every deploy. NEXT_PUBLIC_SITE_URL is an
-// optional override (set it in Vercel project settings if you wire up a custom
-// domain). Falls back to localhost for dev so og-image links still resolve.
+// Priority:
+//   1. NEXT_PUBLIC_SITE_URL — explicit override, e.g. when wiring up a custom domain.
+//   2. VERCEL_PROJECT_PRODUCTION_URL — Vercel auto-injects this on every deploy
+//      and points at the canonical project alias (e.g. scholarscout-theta.vercel.app),
+//      not the per-deployment hash URL.
+//   3. VERCEL_URL — per-deployment URL, used as a fallback for preview deployments
+//      where there's no canonical alias yet.
+//   4. localhost — dev.
 const baseUrl =
   process.env.NEXT_PUBLIC_SITE_URL ||
-  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000");
+  (process.env.VERCEL_PROJECT_PRODUCTION_URL
+    ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+    : process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}`
+    : "http://localhost:3000");
 
 const title = "ScholarScout — Find niche scholarships before everyone else";
 const description =
