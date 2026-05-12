@@ -424,10 +424,17 @@ export function Finder() {
                         <ArrowRight className="h-3.5 w-3.5" />
                         Apply guide
                       </Button>
-                      <Button size="sm" variant="outline">
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        Open page
-                      </Button>
+                      {r.url && r.url !== "#" ? (
+                        <a
+                          href={r.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center justify-center gap-2 h-8 px-3 text-sm font-medium rounded-xl border border-slate-200 bg-white text-slate-900 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800 transition-all duration-200 cursor-pointer whitespace-nowrap"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          Open page
+                        </a>
+                      ) : null}
                     </div>
                   </CardContent>
                 </Card>
