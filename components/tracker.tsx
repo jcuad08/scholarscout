@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Button,
   Card,
@@ -27,13 +27,32 @@ import {
   RefreshCw,
   Loader2,
   ExternalLink,
-  ArrowRight,
   Calendar,
   TrendingDown,
   Check,
   Wand2,
+  Cloud,
+  CloudOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/lib/auth-context";
+import { getSupabase } from "@/lib/supabase";
+import {
+  loadLocalRows,
+  loadLocalLog,
+  loadLocalMaterials,
+  saveLocalRows,
+  saveLocalLog,
+  saveLocalMaterials,
+  loadCloudSnapshot,
+  syncCloudRows,
+  syncCloudLog,
+  syncCloudMaterials,
+  migrateLocalToCloud,
+  hasAnyLocal,
+} from "@/lib/tracker-storage";
+import type { Row, WonLost, Status } from "./tracker-types";
+import { STATUSES } from "./tracker-types";
 
 // Mirrors the shape returned by /api/recommend-from-tracker.
 type Recommendation = {
@@ -47,38 +66,8 @@ type Recommendation = {
   url: string;
 };
 
-type Status =
-  | "Not started"
-  | "Researching"
-  | "Gathering materials"
-  | "Drafting essay"
-  | "Ready to submit"
-  | "Submitted"
-  | "Won"
-  | "Rejected";
-
-const STATUSES: Status[] = [
-  "Not started",
-  "Researching",
-  "Gathering materials",
-  "Drafting essay",
-  "Ready to submit",
-  "Submitted",
-  "Won",
-  "Rejected",
-];
-
-type Row = {
-  id: string;
-  name: string;
-  award: string;
-  deadline: string;
-  status: Status;
-  submitted: string;
-  notes: string;
-};
-
-type WonLost = { id: string; name: string; result: "Won" | "Rejected"; amount: string; date: string };
+// Types live in ./tracker-types so lib/tracker-storage.ts can also import them
+// without creating a circular dependency through this client component.
 
 const MATERIALS = [
   "Resume (PDF)",
@@ -103,67 +92,182 @@ const statusTone: Record<Status, "slate" | "amber" | "violet" | "brand" | "emera
   Rejected: "rose",
 };
 
-function uid() {
-  return Math.random().toString(36).slice(2, 9);
+function uid(): string {
+  // Need real UUIDs for Supabase (the tracker_rows.id column is uuid). Falls
+  // back to a uuid-shaped Math.random string for older browsers, though all
+  // modern targets support crypto.randomUUID.
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  // Minimal RFC4122-shaped fallback. Not crypto-strong but valid.
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 export function Tracker() {
-  // All three start empty so first-time visitors see a clean state, not seed data
-  // pretending to be theirs. Hydration is safe — initial server-render and first
-  // client-render both produce the empty state; localStorage is read in useEffect.
+  const { ready: authReady, user } = useAuth();
+
+  // All three start empty so first-time visitors see a clean state. The auth-
+  // aware loader below populates from localStorage OR Supabase depending on
+  // who's signed in.
   const [rows, setRows] = useState<Row[]>([]);
   const [log, setLog] = useState<WonLost[]>([]);
   const [materials, setMaterials] = useState<Record<string, boolean>>({});
-  // We only persist after the first hydration read — otherwise the empty initial
-  // state would overwrite saved data on first mount.
+  // `hydrated` flips true once we've finished the initial load for the
+  // current auth state. Persistence effects refuse to run until then so we
+  // don't overwrite saved data with our empty initial state.
   const [hydrated, setHydrated] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [migrationToast, setMigrationToast] = useState<string | null>(null);
 
-  // Read persisted state on mount and subscribe to the cross-component
-  // "ss_rows_changed" event that Finder fires when adding to tracker.
+  // Identifies which user (or "local") the current in-memory state belongs
+  // to — when this changes (sign in / sign out), we re-load from the right
+  // source instead of writing the previous user's state to the new one.
+  const stateOwner = useRef<string | null>(null);
+
+  // Auth-aware initial load + reload-on-auth-change.
   useEffect(() => {
-    function loadFromStorage() {
+    if (!authReady) return;
+    const owner = user?.id ?? "local";
+    if (stateOwner.current === owner) return;
+
+    let cancelled = false;
+    setHydrated(false);
+
+    (async () => {
       try {
-        const r = localStorage.getItem("ss_rows");
-        const l = localStorage.getItem("ss_log");
-        const m = localStorage.getItem("ss_materials");
-        if (r) setRows(JSON.parse(r));
-        if (l) setLog(JSON.parse(l));
-        if (m) setMaterials(JSON.parse(m));
-      } catch {}
-    }
-    loadFromStorage();
-    setHydrated(true);
-    // Re-read when Finder pushes a row in. CustomEvent for same-tab sync;
-    // 'storage' covers other tabs/windows of the same site.
-    const onChange = () => loadFromStorage();
-    window.addEventListener("ss_rows_changed", onChange);
-    window.addEventListener("storage", onChange);
+        if (user) {
+          // Logged in: fetch cloud, opportunistically migrate any localStorage
+          // data on first sign-in.
+          const sb = getSupabase();
+          const cloud = await loadCloudSnapshot(sb, user.id);
+
+          let finalRows = cloud.rows;
+          let finalLog = cloud.log;
+          let finalMaterials = cloud.materials;
+
+          if (hasAnyLocal()) {
+            // Upload local data, dedupe by name vs cloud, then clear local.
+            const result = await migrateLocalToCloud(sb, user.id, cloud);
+            // Re-fetch so the local state matches what's now in cloud.
+            const after = await loadCloudSnapshot(sb, user.id);
+            finalRows = after.rows;
+            finalLog = after.log;
+            finalMaterials = after.materials;
+
+            const summary: string[] = [];
+            if (result.migratedRows > 0) summary.push(`${result.migratedRows} scholarships`);
+            if (result.migratedLog > 0) summary.push(`${result.migratedLog} log entries`);
+            if (result.migratedMaterials) summary.push("materials checklist");
+            if (summary.length > 0) {
+              setMigrationToast(`Synced ${summary.join(", ")} from this device to your account.`);
+            }
+          }
+
+          if (!cancelled) {
+            setRows(finalRows);
+            setLog(finalLog);
+            setMaterials(finalMaterials);
+          }
+        } else {
+          // Logged out: read localStorage as before.
+          const r = loadLocalRows();
+          const l = loadLocalLog();
+          const m = loadLocalMaterials();
+          if (!cancelled) {
+            setRows(r);
+            setLog(l);
+            setMaterials(m);
+          }
+        }
+        if (!cancelled) {
+          stateOwner.current = owner;
+          setHydrated(true);
+        }
+      } catch (err) {
+        console.error("[Tracker] load failed", err);
+        if (!cancelled) {
+          // Fall back to whatever's in local so the UI is still usable.
+          setRows(loadLocalRows());
+          setLog(loadLocalLog());
+          setMaterials(loadLocalMaterials());
+          stateOwner.current = owner;
+          setHydrated(true);
+        }
+      }
+    })();
+
     return () => {
-      window.removeEventListener("ss_rows_changed", onChange);
-      window.removeEventListener("storage", onChange);
+      cancelled = true;
     };
-  }, []);
+  }, [authReady, user]);
+
+  // Cross-component event: Finder dispatches "ss_rows_changed" after writing
+  // to localStorage. Only meaningful when logged out (cloud handles its own
+  // sync). When logged in, the Add-to-tracker button writes directly via state.
+  useEffect(() => {
+    if (user) return;
+    function reload() {
+      setRows(loadLocalRows());
+      setLog(loadLocalLog());
+      setMaterials(loadLocalMaterials());
+    }
+    window.addEventListener("ss_rows_changed", reload);
+    window.addEventListener("storage", reload);
+    return () => {
+      window.removeEventListener("ss_rows_changed", reload);
+      window.removeEventListener("storage", reload);
+    };
+  }, [user]);
+
+  // Persistence: write to whichever backend is active. Cloud writes are
+  // debounced 600ms so a flurry of state changes (e.g. typing in a notes
+  // field) collapses into one Supabase round-trip.
+  useEffect(() => {
+    if (!hydrated) return;
+    if (user) {
+      setSyncing(true);
+      const t = setTimeout(() => {
+        syncCloudRows(getSupabase(), user.id, rows)
+          .catch((e) => console.error("[Tracker] cloud sync rows failed", e))
+          .finally(() => setSyncing(false));
+      }, 600);
+      return () => clearTimeout(t);
+    } else {
+      saveLocalRows(rows);
+    }
+  }, [rows, user, hydrated]);
 
   useEffect(() => {
     if (!hydrated) return;
-    try {
-      localStorage.setItem("ss_rows", JSON.stringify(rows));
-    } catch {}
-  }, [rows, hydrated]);
+    if (user) {
+      const t = setTimeout(() => {
+        syncCloudLog(getSupabase(), user.id, log).catch((e) =>
+          console.error("[Tracker] cloud sync log failed", e)
+        );
+      }, 600);
+      return () => clearTimeout(t);
+    } else {
+      saveLocalLog(log);
+    }
+  }, [log, user, hydrated]);
 
   useEffect(() => {
     if (!hydrated) return;
-    try {
-      localStorage.setItem("ss_log", JSON.stringify(log));
-    } catch {}
-  }, [log, hydrated]);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    try {
-      localStorage.setItem("ss_materials", JSON.stringify(materials));
-    } catch {}
-  }, [materials, hydrated]);
+    if (user) {
+      const t = setTimeout(() => {
+        syncCloudMaterials(getSupabase(), user.id, materials).catch((e) =>
+          console.error("[Tracker] cloud sync materials failed", e)
+        );
+      }, 600);
+      return () => clearTimeout(t);
+    } else {
+      saveLocalMaterials(materials);
+    }
+  }, [materials, user, hydrated]);
 
   function addRow() {
     setRows((r) => [
@@ -250,8 +354,53 @@ export function Tracker() {
       <SectionHeading
         eyebrow="Tracker"
         title="Your scholarship command center"
-        description="Inspired by the template you already use. Saves locally — no account needed."
+        description={
+          user
+            ? "Synced to your account — your tracker follows you across devices."
+            : "Saves locally to this browser. Sign in (top-right) to sync across devices."
+        }
       />
+
+      {/* Sync state pill + migration toast (only visible when relevant) */}
+      <div className="-mt-4 flex flex-wrap items-center gap-3">
+        {user ? (
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium",
+              syncing
+                ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+                : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400"
+            )}
+          >
+            {syncing ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" /> Syncing…
+              </>
+            ) : (
+              <>
+                <Cloud className="h-3 w-3" /> Synced
+              </>
+            )}
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-medium text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
+            <CloudOff className="h-3 w-3" /> Local only
+          </span>
+        )}
+        {migrationToast && (
+          <div className="flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400">
+            <Check className="h-3 w-3" />
+            {migrationToast}
+            <button
+              onClick={() => setMigrationToast(null)}
+              aria-label="Dismiss"
+              className="ml-1 text-emerald-600/70 hover:text-emerald-800 dark:hover:text-emerald-200 cursor-pointer"
+            >
+              ×
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Stats bento */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

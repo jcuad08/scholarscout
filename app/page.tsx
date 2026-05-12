@@ -20,6 +20,7 @@ import { ApplyHelper } from "@/components/apply-helper";
 import { TipsHub } from "@/components/tips-hub";
 import { SchoolResults } from "@/components/school-results";
 import { Tracker } from "@/components/tracker";
+import { AuthMenu } from "@/components/auth-menu";
 import { Button, Card, CardContent } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
@@ -98,7 +99,10 @@ export default function Page() {
             })}
           </nav>
 
-          <ThemeToggle />
+          <div className="flex items-center gap-2">
+            <AuthMenu />
+            <ThemeToggle />
+          </div>
         </div>
 
         {/* Mobile tabs */}
@@ -160,7 +164,7 @@ export default function Page() {
             <GraduationCap className="h-4 w-4" />
             ScholarScout — built for incoming freshmen who want odds on their side.
           </div>
-          <div>Free. No account required. Local-first.</div>
+          <div>Free. Local-first. Optional cloud sync.</div>
         </div>
       </footer>
     </div>
@@ -208,11 +212,11 @@ function Home({ goTo }: { goTo: (t: TabId) => void }) {
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              No login required
+              Local-first, no login required
             </span>
             <span className="inline-flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              Saves to your device
+              Optional cloud sync
             </span>
           </div>
         </div>
