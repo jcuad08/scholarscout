@@ -35,7 +35,9 @@ import {
   CloudOff,
   Undo2,
   CheckCircle2,
+  Download,
 } from "lucide-react";
+import { exportTrackerToXlsx } from "@/lib/export-tracker";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
 import { useTracker, splitByCompletion } from "@/lib/tracker-context";
@@ -102,6 +104,8 @@ export function Tracker() {
     removeLogEntry,
   } = useTracker();
   const [refetching, setRefetching] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const toast = useToast();
 
   async function handleRefresh() {
     if (refetching) return;
@@ -110,6 +114,30 @@ export function Tracker() {
       await refetchFromCloud();
     } finally {
       setRefetching(false);
+    }
+  }
+
+  async function handleExport() {
+    if (exporting) return;
+    if (rows.length === 0 && Object.values(materials).every((v) => !v)) {
+      toast.show("Add a scholarship or check off a material first — nothing to export yet.", {
+        tone: "info",
+      });
+      return;
+    }
+    setExporting(true);
+    try {
+      // exceljs is dynamically imported inside this helper — first call adds
+      // ~700 KB to the page's loaded JS, subsequent calls are instant.
+      await exportTrackerToXlsx({ rows, log, materials });
+      toast.show("Exported your tracker as Excel. Check your downloads.", {
+        tone: "success",
+      });
+    } catch (err) {
+      console.error("[Tracker] export failed", err);
+      toast.show("Couldn't generate the export. Try again?", { tone: "warn" });
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -281,15 +309,36 @@ export function Tracker() {
 
       {/* Applications table */}
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <div>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 gap-2">
+          <div className="min-w-0">
             <CardTitle>Active applications</CardTitle>
             <CardDescription>Click any cell to edit. Saves automatically.</CardDescription>
           </div>
-          <Button onClick={addBlankRow} size="sm">
-            <Plus className="h-4 w-4" />
-            Add scholarship
-          </Button>
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              onClick={handleExport}
+              size="sm"
+              variant="outline"
+              disabled={exporting}
+              title="Download your full tracker (Active + Completed + Materials) as an Excel file"
+            >
+              {exporting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Exporting…
+                </>
+              ) : (
+                <>
+                  <Download className="h-4 w-4" />
+                  Export
+                </>
+              )}
+            </Button>
+            <Button onClick={addBlankRow} size="sm">
+              <Plus className="h-4 w-4" />
+              Add scholarship
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto -mx-2">
