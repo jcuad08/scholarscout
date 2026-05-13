@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button, Input, Label } from "./ui";
 import { useAuth } from "@/lib/auth-context";
-import { GraduationCap, Loader2, X, Cloud, CheckCircle2 } from "lucide-react";
+import { getSupabase, isSupabaseConfigured } from "@/lib/supabase";
+import { GraduationCap, Loader2, X, Cloud, CheckCircle2, Mail } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Mode = "signin" | "signup";
@@ -25,19 +26,27 @@ export function AuthModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmationSent, setConfirmationSent] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
   // Wait for client-mount before calling createPortal (document.body doesn't
   // exist during SSR). Without this, the portal runs server-side and explodes.
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  const emailInputRef = useRef<HTMLInputElement>(null);
 
   // Reset state when the modal closes so re-opening is clean.
   useEffect(() => {
     if (!open) {
       setError(null);
       setConfirmationSent(false);
+      setResetSent(false);
       setLoading(false);
     } else {
       setMode(initialMode);
+      // Auto-focus the email input when the modal opens. Small focus delay
+      // so the focus lands AFTER the fade-in animation, otherwise the
+      // browser's focus-ring renders mid-animation and looks janky.
+      const t = setTimeout(() => emailInputRef.current?.focus(), 80);
+      return () => clearTimeout(t);
     }
   }, [open, initialMode]);
 
@@ -82,6 +91,30 @@ export function AuthModal({
       setLoading(false);
     }
     // On success the page navigates away to Google's OAuth — don't reset loading.
+  }
+
+  async function handleForgotPassword() {
+    if (!email.trim()) {
+      setError("Enter your email above first, then click 'Forgot password?' again.");
+      emailInputRef.current?.focus();
+      return;
+    }
+    if (!isSupabaseConfigured()) return;
+    setError(null);
+    setLoading(true);
+    try {
+      const { error } = await getSupabase().auth.resetPasswordForEmail(email.trim(), {
+        redirectTo:
+          typeof window !== "undefined" ? `${window.location.origin}/` : undefined,
+      });
+      if (error) {
+        setError(error.message);
+      } else {
+        setResetSent(true);
+      }
+    } finally {
+      setLoading(false);
+    }
   }
 
   // Render via portal into document.body so the modal escapes any ancestor
@@ -146,6 +179,17 @@ export function AuthModal({
                 Click it to finish creating your account, then come back and sign in.
               </div>
             </div>
+          ) : resetSent ? (
+            <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">
+              <div className="flex items-center gap-2 font-semibold">
+                <Mail className="h-4 w-4" />
+                Password reset email sent
+              </div>
+              <div className="mt-1 text-xs">
+                If an account exists for <span className="font-semibold">{email}</span>,
+                you'll receive a link to reset your password. Check your inbox (and spam).
+              </div>
+            </div>
           ) : (
             <>
               <div className="mt-5 flex gap-2 rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
@@ -191,6 +235,7 @@ export function AuthModal({
                 <div>
                   <Label htmlFor="email">Email</Label>
                   <Input
+                    ref={emailInputRef}
                     id="email"
                     type="email"
                     autoComplete="email"
@@ -201,7 +246,19 @@ export function AuthModal({
                   />
                 </div>
                 <div>
-                  <Label htmlFor="password">Password</Label>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="password">Password</Label>
+                    {mode === "signin" && (
+                      <button
+                        type="button"
+                        onClick={handleForgotPassword}
+                        disabled={loading}
+                        className="text-xs text-brand-600 hover:text-brand-700 dark:text-brand-400 dark:hover:text-brand-300 hover:underline cursor-pointer disabled:opacity-50"
+                      >
+                        Forgot password?
+                      </button>
+                    )}
+                  </div>
                   <Input
                     id="password"
                     type="password"

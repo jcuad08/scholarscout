@@ -39,6 +39,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/lib/auth-context";
 import { useTracker, splitByCompletion } from "@/lib/tracker-context";
+import { useToast } from "@/lib/toast-context";
 import type { Row, Status } from "./tracker-types";
 import { STATUSES } from "./tracker-types";
 
@@ -85,6 +86,7 @@ const statusTone: Record<Status, "slate" | "amber" | "violet" | "brand" | "emera
 export function Tracker() {
   const { user } = useAuth();
   const {
+    ready,
     rows,
     log,
     materials,
@@ -125,6 +127,39 @@ export function Tracker() {
     .filter((l) => l.result === "Won")
     .reduce((sum, l) => sum + parseInt(l.amount.replace(/[^0-9]/g, "") || "0", 10), 0);
   const completedMaterials = Object.values(materials).filter(Boolean).length;
+
+  // Loading skeleton: only when authed and the cloud snapshot is still
+  // loading. Without this, a signed-in user lands on the Tracker tab and
+  // briefly sees 'No applications yet' before their actual rows arrive —
+  // looks like data loss.
+  if (user && !ready) {
+    return (
+      <div className="space-y-8">
+        <SectionHeading
+          eyebrow="Tracker"
+          title="Your scholarship command center"
+          description="Loading your tracker from your account…"
+        />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {[0, 1, 2, 3].map((i) => (
+            <Card key={i}>
+              <CardContent className="p-5">
+                <div className="h-3 w-16 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                <div className="mt-2 h-8 w-12 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+                <div className="mt-1 h-2.5 w-20 rounded bg-slate-200 dark:bg-slate-800 animate-pulse" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        <Card>
+          <CardContent className="p-10 flex items-center justify-center text-slate-500 text-sm">
+            <Loader2 className="h-5 w-5 animate-spin mr-2" />
+            Pulling your scholarships from the cloud…
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8">
@@ -531,6 +566,7 @@ function RecommendationsPanel() {
   // trackedNames lets us mark recs as "In tracker" so the user can't add
   // duplicates from the recommendations list either.
   const { rows, materials, addRow, trackedNames } = useTracker();
+  const toast = useToast();
 
   const [recs, setRecs] = useState<Recommendation[]>([]);
   const [loading, setLoading] = useState(false);
@@ -600,7 +636,10 @@ function RecommendationsPanel() {
     // the tracker it returns { added: false } and we just no-op. The
     // "In tracker" badge below is driven off trackedNames so it stays
     // accurate after the row lands.
-    addRow({ name: rec.name, award: rec.amount, notes: rec.why });
+    const result = addRow({ name: rec.name, award: rec.amount, notes: rec.why });
+    if (result.added) {
+      toast.show(`Added "${rec.name}" to your tracker`, { tone: "success" });
+    }
   }
 
   // Empty-state: no rows yet, so no inference is possible.

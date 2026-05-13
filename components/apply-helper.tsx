@@ -21,7 +21,6 @@ import {
   FileText,
   Sparkles,
   Quote,
-  Lightbulb,
   Wrench,
   Send,
   Loader2,
@@ -195,44 +194,35 @@ export function ApplyHelper({ preset = "" }: ApplyHelperProps) {
 
       {generated && (
         <div className="space-y-8 animate-fade-in-up">
-          {/* Overview bento */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card className="bg-gradient-to-br from-brand-600 to-brand-500 border-0 text-white md:col-span-2">
-              <CardContent className="p-6">
-                <Badge tone="amber" className="bg-white/20 text-white">Custom plan</Badge>
-                <h3 className="font-display text-2xl font-bold mt-3">
-                  {scholarship}
-                </h3>
-                <p className="mt-2 text-brand-100">
-                  Below is a 6-step playbook, the exact tools to use, an essay outline, and a free
-                  review tool to score your draft before you submit.
-                </p>
-                <div className="mt-4 flex flex-wrap gap-2 text-sm">
-                  <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-3 py-1">
-                    <Clock className="h-3.5 w-3.5" /> ~90 min total
-                  </span>
-                  <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-3 py-1">
-                    <FileText className="h-3.5 w-3.5" /> 1 essay (≈500 words)
-                  </span>
-                  <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-3 py-1">
-                    <CheckCircle2 className="h-3.5 w-3.5" /> 2 recs needed
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="bg-gradient-to-br from-accent-50 to-white dark:from-accent-500/5 dark:to-slate-900 border-accent-200 dark:border-accent-500/20">
-              <CardContent className="p-6">
-                <Lightbulb className="h-6 w-6 text-accent-500" />
-                <h4 className="mt-3 font-display font-semibold text-slate-900 dark:text-slate-50">
-                  Reviewer's hidden bias
-                </h4>
-                <p className="mt-1 text-sm text-slate-700 dark:text-slate-300">
-                  This org rewards <span className="font-semibold">community impact stories</span>. Past winners
-                  led local projects — not just résumés. Lead with that.
-                </p>
-              </CardContent>
-            </Card>
-          </div>
+          {/* Overview banner. Honest about what's generic vs scholarship-
+              specific — no fake "Reviewer's hidden bias" claim, no fake
+              "1 essay / 2 recs needed" specifics that we can't actually
+              know without reading the scholarship's real application page. */}
+          <Card className="bg-gradient-to-br from-brand-600 to-brand-500 border-0 text-white">
+            <CardContent className="p-6">
+              <Badge tone="amber" className="bg-white/20 text-white">
+                Application playbook
+              </Badge>
+              <h3 className="font-display text-2xl font-bold mt-3">{scholarship}</h3>
+              <p className="mt-2 text-brand-100 max-w-2xl">
+                A general 6-step playbook that works for any scholarship, plus the tools
+                we recommend, an essay outline, and a free draft-review tool. Always cross-check
+                the official scholarship page for exact word counts, deadlines, and required
+                documents.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2 text-sm">
+                <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-3 py-1">
+                  <Clock className="h-3.5 w-3.5" /> ~90 min plan
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-3 py-1">
+                  <FileText className="h-3.5 w-3.5" /> Essay outline included
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-3 py-1">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Free draft scoring
+                </span>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Steps */}
           <Card>

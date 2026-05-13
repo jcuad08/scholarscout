@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTracker } from "@/lib/tracker-context";
+import { useToast } from "@/lib/toast-context";
 
 type Result = {
   name: string;
@@ -139,6 +140,7 @@ export function Finder({ onApplyGuide }: FinderProps) {
   // and gate the Add-to-tracker button; addRow centralizes the dedup so
   // duplicates can't be created from here.
   const { trackedNames, addRow } = useTracker();
+  const toast = useToast();
 
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -157,10 +159,17 @@ export function Finder({ onApplyGuide }: FinderProps) {
   const [noMoreResults, setNoMoreResults] = useState(false);
 
   function addToTracker(r: Result) {
-    addRow({ name: r.name, award: r.amount, notes: r.why });
-    // No optimistic local state needed — trackedNames updates instantly when
-    // the row lands in the context, which re-renders this card with the
-    // "In tracker" state.
+    const result = addRow({ name: r.name, award: r.amount, notes: r.why });
+    // The result card disappears from Finder once the row lands in tracker
+    // (the filter drops tracked names). Without a toast the user wonders if
+    // the click actually did anything — show a quick confirmation.
+    if (result.added) {
+      toast.show(`Added "${r.name}" to your tracker`, { tone: "success" });
+    } else {
+      // Rare: only triggers if a manual edit in tracker created the same name
+      // before the user clicked here.
+      toast.show(`"${r.name}" is already in your tracker`, { tone: "info" });
+    }
   }
 
   function toggleHobby(h: string) {

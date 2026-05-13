@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
 import { TrackerProvider } from "@/lib/tracker-context";
+import { ToastProvider } from "@/lib/toast-context";
 
 // Resolve a base URL for absolute Open Graph / Twitter image links.
 // Priority:
@@ -106,7 +107,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body>
         <AuthProvider>
-          <TrackerProvider>{children}</TrackerProvider>
+          <TrackerProvider>
+            <ToastProvider>{children}</ToastProvider>
+          </TrackerProvider>
         </AuthProvider>
       </body>
     </html>
